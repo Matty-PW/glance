@@ -1,0 +1,133 @@
+# Synthetic evaluation set for the FAST/DEEP bake-offs. The scenes are local
+# HTML mock-ups (eval/scenes/*.html) rendered to PNG by eval/render.swift, so
+# the set contains no real screen content and the ground truth is known.
+#
+# `expect` is a list of groups; a reply scores a hit when every group has at
+# least one of its alternatives in the reply (case-insensitive).
+# `hard = true` marks questions FAST should hand to DEEP instead of answering.
+
+[[scene]]
+name = "editor"
+  [[scene.q]]
+  ask = "What's the error on screen?"
+  expect = [["mismatched", "type"], ["u64"]]
+  [[scene.q]]
+  ask = "Which file is open?"
+  expect = [["manifest.rs", "manifest dot rs", "manifest"]]
+  [[scene.q]]
+  ask = "What line is the error on?"
+  expect = [["42", "forty-two", "forty two"]]
+  [[scene.q]]
+  ask = "What does the status bar say about the cursor position?"
+  expect = [["42"], ["17"]]
+  [[scene.q]]
+  ask = "What are the other two tabs called?"
+  expect = [["store"], ["download"]]
+  [[scene.q]]
+  ask = "Walk me through three different ways to fix this function and the trade-offs of each one."
+  hard = true
+
+[[scene]]
+name = "sheet"
+  [[scene.q]]
+  ask = "How much did we spend on marketing in August?"
+  expect = [["51,900", "51900", "51.9", "fifty-one thousand nine hundred", "fifty one thousand nine hundred"]]
+  [[scene.q]]
+  ask = "Which category had the biggest spend in September?"
+  expect = [["engineering"]]
+  [[scene.q]]
+  ask = "What's the total for the whole quarter?"
+  expect = [["901,600", "901600", "901.6", "nine hundred one thousand", "nine hundred and one thousand"]]
+  [[scene.q]]
+  ask = "How much was travel in July?"
+  expect = [["9,300", "9300", "9.3 thousand", "nine thousand three hundred"]]
+  [[scene.q]]
+  ask = "Were we over budget in August?"
+  expect = [["over", "yes", "exceed", "above"]]
+  [[scene.q]]
+  ask = "For each category, work out the percentage change from July to September and tell me which grew fastest."
+  hard = true
+
+[[scene]]
+name = "mail"
+  [[scene.q]]
+  ask = "When is the design review now?"
+  expect = [["thursday"], ["2:30", "2.30", "two thirty", "two-thirty", "half past two"]]
+  [[scene.q]]
+  ask = "Who should I send my slides to?"
+  expect = [["tomas"]]
+  [[scene.q]]
+  ask = "Which room is it in?"
+  expect = [["juniper"]]
+  [[scene.q]]
+  ask = "What time did the CI email arrive?"
+  expect = [["9:12", "09:12", "9.12", "nine twelve"]]
+  [[scene.q]]
+  ask = "Who is organising lunch on Friday?"
+  expect = [["hana"]]
+  [[scene.q]]
+  ask = "Draft a careful reply explaining I can't make Thursday, proposing two alternatives, and summarizing what I'd present."
+  hard = true
+
+[[scene]]
+name = "terminal"
+  [[scene.q]]
+  ask = "Did the tests pass?"
+  expect = [["fail"]]
+  [[scene.q]]
+  ask = "Which test failed?"
+  expect = [["refuses_wrong_hash", "refuses wrong hash"]]
+  [[scene.q]]
+  ask = "How many tests passed?"
+  expect = [["11", "eleven"]]
+  [[scene.q]]
+  ask = "Which file and line did it panic at?"
+  expect = [["store.rs", "store dot rs"], ["212"]]
+  [[scene.q]]
+  ask = "What were the left and right values in the failed assertion?"
+  expect = [["3", "three"], ["4", "four"]]
+  [[scene.q]]
+  ask = "Think carefully: what are the most likely root causes of this failure, and how would I debug each one step by step?"
+  hard = true
+
+[[scene]]
+name = "settings"
+  [[scene.q]]
+  ask = "What Wi-Fi network am I on?"
+  expect = [["harbor"]]
+  [[scene.q]]
+  ask = "What's my IP address?"
+  expect = [["192.168.4.27"]]
+  [[scene.q]]
+  ask = "Is low data mode turned on?"
+  expect = [["off", "not ", "isn't", "disabled", "no,", "no."]]
+  [[scene.q]]
+  ask = "What are my DNS servers?"
+  expect = [["1.1.1.1"], ["9.9.9.9"]]
+  [[scene.q]]
+  ask = "What's the router's address?"
+  expect = [["192.168.4.1"]]
+  [[scene.q]]
+  ask = "Explain in detail what each of these three toggles does, and reason through which ones I should change for privacy on a public network."
+  hard = true
+
+[[scene]]
+name = "chart"
+  [[scene.q]]
+  ask = "Which week had the most active users?"
+  expect = [["week 4", "week four", "fourth week", "last week"]]
+  [[scene.q]]
+  ask = "What's the churn rate?"
+  expect = [["2.4"]]
+  [[scene.q]]
+  ask = "How many new signups were there?"
+  expect = [["312", "three hundred twelve", "three hundred and twelve"]]
+  [[scene.q]]
+  ask = "How many active users were there in week 3?"
+  expect = [["1,310", "1310"]]
+  [[scene.q]]
+  ask = "How many support tickets were there?"
+  expect = [["89", "eighty-nine", "eighty nine"]]
+  [[scene.q]]
+  ask = "Calculate the week over week growth rate for each week and the average weekly growth across the month."
+  hard = true

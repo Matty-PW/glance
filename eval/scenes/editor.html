@@ -1,0 +1,38 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.tabs{display:flex;background:#252526;color:#aaa;font-size:12px}.tab{padding:8px 16px;border-right:1px solid #1e1e1e}.tab.on{background:#1e1e1e;color:#fff}
+.code{flex:1;background:#1e1e1e;color:#d4d4d4;font:13px/20px Menlo,monospace;padding:10px 0;white-space:pre}
+.ln{display:inline-block;width:52px;text-align:right;color:#6e7681;padding-right:16px}.k{color:#569cd6}.s{color:#ce9178}.t{color:#4ec9b0}.c{color:#6a9955}
+.err{background:rgba(255,80,80,.18);display:block}.sq{text-decoration:underline wavy #f14c4c}
+.panel{height:170px;background:#181818;color:#ccc;font:12px/19px Menlo,monospace;padding:8px 14px;border-top:1px solid #333;white-space:pre}
+.panel b{color:#f14c4c}.status{height:24px;background:#007acc;color:#fff;font-size:12px;display:flex;align-items:center;gap:22px;padding:0 12px}
+</style>
+<div class="menubar"><b>Code</b><span>File</span><span>Edit</span><span>Selection</span><span>View</span><span>Go</span><span>Run</span><span class="right">Tue 10:42</span></div>
+<div class="window"><div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">manifest.rs — glance</span></div>
+<div class="tabs"><div class="tab on">manifest.rs</div><div class="tab">store.rs</div><div class="tab">download.rs</div></div>
+<div class="code"><span class="ln">34</span><span class="c">/// Total size of every file in the model, in bytes.</span>
+<span class="ln">35</span><span class="k">pub fn</span> total_bytes(model: &amp;<span class="t">Model</span>) -&gt; <span class="t">u64</span> {
+<span class="ln">36</span>    <span class="k">let mut</span> total: <span class="t">u64</span> = 0;
+<span class="ln">37</span>    <span class="k">for</span> file <span class="k">in</span> &amp;model.files {
+<span class="ln">38</span>        total += file.size;
+<span class="ln">39</span>    }
+<span class="ln">40</span>    <span class="k">if</span> total == 0 {
+<span class="ln">41</span>        <span class="c">// nothing to download</span>
+<span class="err"><span class="ln">42</span>        <span class="k">return</span> <span class="sq"><span class="s">"empty"</span></span>;</span><span class="ln">43</span>    }
+<span class="ln">44</span>    total
+<span class="ln">45</span>}
+<span class="ln">46</span>
+<span class="ln">47</span><span class="k">pub fn</span> largest_file(model: &amp;<span class="t">Model</span>) -&gt; <span class="t">Option</span>&lt;&amp;<span class="t">ModelFile</span>&gt; {
+<span class="ln">48</span>    model.files.iter().max_by_key(|f| f.size)
+<span class="ln">49</span>}
+</div>
+<div class="panel">PROBLEMS  1     OUTPUT     TERMINAL
+
+<b>error[E0308]</b>: mismatched types
+  --&gt; crates/models/src/manifest.rs:42:16
+   |
+35 | pub fn total_bytes(model: &amp;Model) -&gt; u64 {
+   |                                      --- expected `u64` because of return type
+42 |         return "empty";
+   |                ^^^^^^^ expected `u64`, found `&amp;str`</div>
+<div class="status"><span>main</span><span>1 error, 0 warnings</span><span style="margin-left:auto">Ln 42, Col 17</span><span>Rust</span></div></div>

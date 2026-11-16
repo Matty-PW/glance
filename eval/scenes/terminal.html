@@ -1,0 +1,31 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>.term{flex:1;background:#101216;color:#d6d6d6;font:13px/20px Menlo,monospace;padding:14px 18px;white-space:pre}.g2{color:#3fb950}.r2{color:#f85149}.d{color:#8b949e}.p{color:#79c0ff}</style>
+<div class="menubar"><b>Terminal</b><span>Shell</span><span>Edit</span><span>View</span><span>Window</span><span class="right">Tue 10:51</span></div>
+<div class="window"><div class="titlebar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">glance — zsh — 148×40</span></div>
+<div class="term"><span class="p">~/code/glance</span> <span class="d">main</span> $ cargo test -p glance-models
+   Compiling glance-models v0.1.0
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.31s
+     Running unittests src/lib.rs
+
+running 12 tests
+test manifest::tests::accepts_the_allowed_formats ... <span class="g2">ok</span>
+test manifest::tests::rejects_pickle_formats ... <span class="g2">ok</span>
+test manifest::tests::rejects_unsafe_paths ... <span class="g2">ok</span>
+test download::tests::refuses_everything_else ... <span class="g2">ok</span>
+test store::tests::accepts_a_matching_file ... <span class="g2">ok</span>
+test store::tests::refuses_wrong_hash ... <span class="r2">FAILED</span>
+test store::tests::refuses_missing_file ... <span class="g2">ok</span>
+<span class="d">  (5 more tests ok)</span>
+
+failures:
+
+---- store::tests::refuses_wrong_hash stdout ----
+thread 'store::tests::refuses_wrong_hash' panicked at crates/models/src/store.rs:212:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+
+test result: <span class="r2">FAILED</span>. 11 passed; 1 failed; 0 ignored; finished in 0.04s
+
+<span class="r2">error</span>: test failed, to rerun pass `-p glance-models --lib`
+<span class="p">~/code/glance</span> <span class="d">main</span> $ ▌</div></div>
