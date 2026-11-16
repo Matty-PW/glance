@@ -22,3 +22,4 @@ glance-audio.workspace = true
 glance-stt.workspace = true
 serde.workspace = true
 toml.workspace = true
+glance-tts.workspace = true

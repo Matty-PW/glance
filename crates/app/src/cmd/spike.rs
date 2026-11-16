@@ -1,6 +1,6 @@
-//! `glance spike`: the M0 end-to-end run. Record the microphone, transcribe,
-//! send a PNG plus the transcript to a local model, print the streamed reply,
-//! and report how long every stage took.
+//! `glance spike`: the end-to-end run. Record the microphone, transcribe, send
+//! a PNG plus the transcript to a local model, print the streamed reply while
+//! speaking it sentence by sentence, and report how long every stage took.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -15,7 +15,11 @@ use glance_llm_client::{
 use glance_stt::{Parakeet, SpeechToText};
 use serde_json::json;
 
-use super::{SPOKEN_SYSTEM_PROMPT, find_model, manifest, ms, store};
+use glance_tts::system_voice::SystemVoice;
+use glance_tts::{ChunkerConfig, SentenceChunker, TextToSpeech};
+
+use super::say::VoiceArgs;
+use super::{SPOKEN_SYSTEM_PROMPT, find_model, manifest, ms, store, track_speech};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -45,6 +49,11 @@ pub struct Args {
     no_prewarm: bool,
     #[arg(long, default_value_t = 200)]
     max_tokens: u32,
+    /// Print the reply without speaking it.
+    #[arg(long)]
+    no_speak: bool,
+    #[command(flatten)]
+    voice: VoiceArgs,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -66,6 +75,12 @@ pub async fn run(args: Args) -> Result<()> {
     stage(&mut report, "stt load (setup)", started.elapsed());
 
     let client = OpenAiClient::new(Endpoint::loopback(&args.endpoint, &args.model)?)?;
+
+    // The speech engine is started up front so its start-up is not part of a turn.
+    let speech = (!args.no_speak).then(|| {
+        let (voice, events) = SystemVoice::new(args.voice.config());
+        (voice, track_speech(events))
+    });
 
     // --- "key down": capture, then prewarm while the user talks ---------------
     let started = Instant::now();
@@ -98,7 +113,13 @@ pub async fn run(args: Args) -> Result<()> {
     };
 
     let clip = match &args.wav {
-        Some(path) => glance_stt::read_wav(path)?,
+        Some(path) => {
+            let clip = glance_stt::read_wav(path)?;
+            // Stand in for the time the user would spend speaking, so the
+            // prewarm overlaps it exactly as it does with the microphone.
+            tokio::time::sleep(clip.duration()).await;
+            clip
+        }
         None => {
             let mut mic = Microphone::new(60);
             let started = Instant::now();
@@ -159,27 +180,48 @@ pub async fn run(args: Args) -> Result<()> {
     ];
     let started = Instant::now();
     let mut ttft = None;
-    let mut first_sentence = None;
-    let mut reply = String::new();
+    let mut first_chunk = None;
+    let mut chunker = SentenceChunker::new(ChunkerConfig::default());
+    let mut spoken: u64 = 0;
+    let mut say = |chunks: Vec<String>, first_chunk: &mut Option<(Duration, Duration)>| {
+        for chunk in chunks {
+            first_chunk.get_or_insert_with(|| (started.elapsed(), key_up.elapsed()));
+            if let Some((voice, _)) = &speech
+                && voice.speak(&chunk).is_ok()
+            {
+                spoken += 1;
+            }
+        }
+    };
     print!("glance: ");
     let summary = complete(&client, messages, args.max_tokens, |text| {
         ttft.get_or_insert_with(|| (started.elapsed(), key_up.elapsed()));
-        reply.push_str(text);
-        if first_sentence.is_none() && ends_sentence(&reply) {
-            first_sentence = Some((started.elapsed(), key_up.elapsed()));
-        }
+        say(chunker.push(text), &mut first_chunk);
         print!("{text}");
         let _ = std::io::stdout().flush();
     })
     .await?;
+    say(chunker.finish().into_iter().collect(), &mut first_chunk);
     println!();
     let generation = started.elapsed();
+
+    // Wait for the last sentence to finish sounding.
+    let mut first_audio = None;
+    if let Some((_voice, progress)) = &speech {
+        let mut progress = progress.clone();
+        let finished = progress.wait_for(|p| p.ended >= spoken);
+        match tokio::time::timeout(Duration::from_secs(120), finished).await {
+            Ok(Ok(seen)) => first_audio = seen.first_audio,
+            _ => eprintln!("warning: speech did not report finishing"),
+        }
+    }
+    let speech_done = key_up.elapsed();
 
     if let Some((since_request, _)) = ttft {
         stage(&mut report, "llm time to first token", since_request);
     }
-    if let Some((since_request, _)) = first_sentence {
-        stage(&mut report, "llm first full sentence", since_request);
+    if let Some((since_request, _)) = first_chunk {
+        stage(&mut report, "llm first speakable chunk", since_request);
     }
     stage(&mut report, "llm whole reply", generation);
     if let Some(t) = &summary.timings {
@@ -204,11 +246,26 @@ pub async fn run(args: Args) -> Result<()> {
     if let Some((_, since_key_up)) = ttft {
         println!("{:<32} {:>8.1} ms", "first token", ms(since_key_up));
     }
-    if let Some((_, since_key_up)) = first_sentence {
+    if let Some((_, since_key_up)) = first_chunk {
         println!(
-            "{:<32} {:>8.1} ms   (earliest moment TTS could start, M1)",
-            "first full sentence",
+            "{:<32} {:>8.1} ms",
+            "first chunk handed to TTS",
             ms(since_key_up)
+        );
+    }
+    if speech.is_some() {
+        match first_audio {
+            Some(at) => println!(
+                "{:<32} {:>8.1} ms   <- the metric that matters",
+                "TIME TO FIRST AUDIO",
+                ms(at.duration_since(key_up))
+            ),
+            None => println!("{:<32} never reported", "TIME TO FIRST AUDIO"),
+        }
+        println!(
+            "{:<32} {:>8.1} ms   ({spoken} sentence(s))",
+            "speech finished",
+            ms(speech_done)
         );
     }
     Ok(())

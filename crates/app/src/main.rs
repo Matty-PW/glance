@@ -35,27 +35,36 @@ enum Command {
     Bench(cmd::bench::Args),
     /// Record briefly and print microphone level and timing (no transcription).
     MicCheck(cmd::mic_check::Args),
+    /// Speak some text with the system voice, sentence by sentence.
+    Say(cmd::say::Args),
+    /// List the English system voices installed on this Mac.
+    Voices,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    let runtime = || {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+    };
     match cli.command {
         Command::Serve(args) => cmd::serve::run(args),
         Command::SttBench(args) => cmd::stt_bench::run(args),
         Command::MicCheck(args) => cmd::mic_check::run(args),
-        other => tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?
-            .block_on(async move {
-                match other {
-                    Command::Models { action } => cmd::models::run(action).await,
-                    Command::CacheCheck(args) => cmd::cache_check::run(args).await,
-                    Command::Spike(args) => cmd::spike::run(args).await,
-                    Command::Bench(args) => cmd::bench::run(args).await,
-                    Command::Serve(_) | Command::SttBench(_) | Command::MicCheck(_) => {
-                        unreachable!("handled above")
-                    }
-                }
-            }),
+        Command::Say(args) => cmd::say::run(args),
+        Command::Voices => cmd::say::voices(),
+        Command::Spike(args) => {
+            // The spike speaks, and macOS delivers speech events on the main
+            // thread's run loop. So the pipeline runs on the runtime's worker
+            // threads while this (main) thread keeps the run loop turning.
+            let runtime = runtime()?;
+            let task = runtime.spawn(cmd::spike::run(args));
+            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            runtime.block_on(task)?
+        }
+        Command::Models { action } => runtime()?.block_on(cmd::models::run(action)),
+        Command::CacheCheck(args) => runtime()?.block_on(cmd::cache_check::run(args)),
+        Command::Bench(args) => runtime()?.block_on(cmd::bench::run(args)),
     }
 }

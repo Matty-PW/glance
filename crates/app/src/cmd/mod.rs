@@ -2,12 +2,18 @@ pub mod bench;
 pub mod cache_check;
 pub mod mic_check;
 pub mod models;
+pub mod say;
 pub mod serve;
 pub mod spike;
 pub mod stt_bench;
 
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use glance_models::{Manifest, Model, ModelStore};
+use glance_tts::SpeechEvent;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::watch;
 
 /// System prompt used by the spikes. Replies are meant to be spoken.
 pub const SPOKEN_SYSTEM_PROMPT: &str = "You are a voice assistant looking at a screenshot of the user's screen. \
@@ -35,4 +41,36 @@ pub fn store() -> Result<ModelStore> {
 /// Milliseconds with one decimal, for timing reports.
 pub fn ms(duration: std::time::Duration) -> f64 {
     (duration.as_secs_f64() * 10_000.0).round() / 10.0
+}
+
+/// What has been heard back from the speech engine so far.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SpeechProgress {
+    /// When the first sentence started to sound.
+    pub first_audio: Option<Instant>,
+    /// Sentences that are over, spoken or cancelled.
+    pub ended: u64,
+    pub cancelled: u64,
+}
+
+/// Timestamp speech events as they arrive, on a helper thread, and publish
+/// the running totals.
+pub fn track_speech(mut events: UnboundedReceiver<SpeechEvent>) -> watch::Receiver<SpeechProgress> {
+    let (tx, rx) = watch::channel(SpeechProgress::default());
+    std::thread::spawn(move || {
+        while let Some(event) = events.blocking_recv() {
+            let now = Instant::now();
+            tx.send_modify(|progress| match event {
+                SpeechEvent::Started(_) => {
+                    progress.first_audio.get_or_insert(now);
+                }
+                SpeechEvent::Finished(_) => progress.ended += 1,
+                SpeechEvent::Cancelled(_) => {
+                    progress.ended += 1;
+                    progress.cancelled += 1;
+                }
+            });
+        }
+    });
+    rx
 }
