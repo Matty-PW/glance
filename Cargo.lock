@@ -349,6 +349,14 @@ dependencies = [
 [[package]]
 name = "glance-llm-client"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "glance-models"
