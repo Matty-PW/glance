@@ -6,6 +6,8 @@
 
 mod chunker;
 mod speakable;
+#[cfg(target_os = "macos")]
+pub mod system_voice;
 
 pub use chunker::{ChunkerConfig, SentenceChunker};
 pub use speakable::speakable;

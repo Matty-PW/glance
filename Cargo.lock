@@ -783,7 +783,11 @@ dependencies = [
 name = "glance-tts"
 version = "0.1.0"
 dependencies = [
+ "objc2",
+ "objc2-avf-audio",
+ "objc2-foundation",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
