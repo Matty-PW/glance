@@ -20,3 +20,145 @@
 #     sha256 = "<64 hex>"
 
 schema = 1
+
+# ---- FAST candidates (vision-language) --------------------------------------
+
+[[model]]
+id       = "qwen3-vl-4b-instruct-q4km"
+role     = "vlm"
+license  = "Apache-2.0"
+repo     = "Qwen/Qwen3-VL-4B-Instruct-GGUF"
+revision = "1cd86afb9a95c410a6038ab3b40d8b578c892266"
+
+  [[model.file]]
+  path   = "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+  kind   = "weights"
+  format = "gguf"
+  size   = 2497281664
+  sha256 = "66358cb18bb6b3b1b6675aa412c7a88ef01d228f481184d13668e5201c730a0a"
+
+  [[model.file]]
+  path   = "mmproj-Qwen3VL-4B-Instruct-F16.gguf"
+  kind   = "mmproj"
+  format = "gguf"
+  size   = 836180256
+  sha256 = "256f3a43bd4205ffef48d6b92715e1e70b5b0e9aef06522584967513a9985331"
+
+[[model]]
+id       = "qwen3-vl-8b-instruct-q4km"
+role     = "vlm"
+license  = "Apache-2.0"
+repo     = "Qwen/Qwen3-VL-8B-Instruct-GGUF"
+revision = "f982a07559d4a2f6c8744d840bf6fccab30eea96"
+
+  [[model.file]]
+  path   = "Qwen3VL-8B-Instruct-Q4_K_M.gguf"
+  kind   = "weights"
+  format = "gguf"
+  size   = 5027784800
+  sha256 = "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2"
+
+  [[model.file]]
+  path   = "mmproj-Qwen3VL-8B-Instruct-F16.gguf"
+  kind   = "mmproj"
+  format = "gguf"
+  size   = 1159029824
+  sha256 = "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38"
+
+# LFM Open License v1.0: Apache-style, but commercial use is licensed only
+# below USD 10 million annual revenue. Read the LICENSE in the repo before
+# shipping this model in anything commercial.
+[[model]]
+id       = "lfm2.5-vl-3b-q4km"
+role     = "vlm"
+license  = "LFM Open License v1.0"
+repo     = "LiquidAI/LFM2.5-VL-3B-GGUF"
+revision = "6f730e9a2c454e8af9adc29db58e638e01e5957f"
+
+  [[model.file]]
+  path   = "LFM2.5-VL-3B-Q4_K_M.gguf"
+  kind   = "weights"
+  format = "gguf"
+  size   = 1674455072
+  sha256 = "2436cf4bbac9a16e5dfc7799a140e583c2bc15958f4b24a391f8a8b10ecb8884"
+
+  [[model.file]]
+  path   = "mmproj-LFM2.5-VL-3B-F16.gguf"
+  kind   = "mmproj"
+  format = "gguf"
+  size   = 853993952
+  sha256 = "74c4b2c095913be3cccce10aefe3b5d6f73aa7b4a15d49a8b68d97c229f8b922"
+
+# ---- Speech-to-text ---------------------------------------------------------
+# NVIDIA Parakeet TDT 0.6b, ONNX export by istupakov. CC-BY-4.0: attribution
+# to NVIDIA is required wherever glance is distributed with or for these models.
+
+[[model]]
+id       = "parakeet-tdt-0.6b-v3-int8"
+role     = "stt"
+license  = "CC-BY-4.0"
+repo     = "istupakov/parakeet-tdt-0.6b-v3-onnx"
+revision = "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce"
+
+  [[model.file]]
+  path   = "encoder-model.int8.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 652183999
+  sha256 = "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09"
+
+  [[model.file]]
+  path   = "decoder_joint-model.int8.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 18202004
+  sha256 = "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"
+
+  [[model.file]]
+  path   = "nemo128.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 139764
+  sha256 = "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f"
+
+  [[model.file]]
+  path   = "vocab.txt"
+  kind   = "aux"
+  format = "text"
+  size   = 93939
+  sha256 = "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"
+
+[[model]]
+id       = "parakeet-tdt-0.6b-v2-int8"
+role     = "stt"
+license  = "CC-BY-4.0"
+repo     = "istupakov/parakeet-tdt-0.6b-v2-onnx"
+revision = "0bbb45a3365852604aef28b538a8f066f4ccaa85"
+
+  [[model.file]]
+  path   = "encoder-model.int8.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 652184014
+  sha256 = "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155"
+
+  [[model.file]]
+  path   = "decoder_joint-model.int8.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 8998286
+  sha256 = "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3"
+
+  [[model.file]]
+  path   = "nemo128.onnx"
+  kind   = "weights"
+  format = "onnx"
+  size   = 139764
+  sha256 = "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f"
+
+  [[model.file]]
+  path   = "vocab.txt"
+  kind   = "aux"
+  format = "text"
+  size   = 9384
+  sha256 = "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"
