@@ -1,7 +1,8 @@
 # glance — design
 
-Status: approved design for v1, written 2026-11-16. Read together with `CLAUDE.md`,
-whose security and privacy rules take precedence over anything here.
+Status: approved design for v1, written 2026-11-16. M0 (CLI spike) is done and its
+measurements are recorded in §4, §5, §6.4, §7.2, §12 and §13. Read together with
+`CLAUDE.md`, whose security and privacy rules take precedence over anything here.
 
 Crate versions and model file sizes were read from docs.rs, Hugging Face, and
 upstream sources on the date above. Anything not confirmed from a primary source is
@@ -30,8 +31,8 @@ Deviations from the brief:
   Kokoro landing (§6).
 - **M2 includes a minimal tray icon** (status + Quit). A Dock-less app needs a way
   to quit and show state; overlay and settings still wait for M5.
-- **ONNX Runtime comes from Homebrew** if it passes a dependency check, otherwise
-  from the `ort` crate's checksum-verified download (§6.4).
+- **ONNX Runtime comes from the `ort` crate's checksum-verified download.**
+  Homebrew's build was the first choice but failed the dependency check (§6.4).
 - **CLAUDE.md amendments** recording decisions 1–3, plus "plain-text aux files
   (vocab/config) are allowed when hash-pinned". Exact diff proposed in Step 2.
 
@@ -91,7 +92,7 @@ lock-free ring buffers.
 | Audio I/O | `cpal` 0.18.2 | Apache | as specified; macOS 14.2+ |
 | Resampling | `rubato` 5.1.0 | MIT/Apache | mic rate → 16 kHz; 24 kHz → output device rate |
 | STT | `transcribe-rs` 0.3.12, feature `onnx` | MIT | §5 |
-| ONNX Runtime | `ort` 2.0.0-rc.15 (ONNX Runtime 1.31 API) | MIT/Apache | shared by STT and Kokoro; still a release candidate, no stable 2.0 exists |
+| ONNX Runtime | `ort` 2.0.0-rc.12 (ONNX Runtime 1.24.2) | MIT/Apache | shared by STT and Kokoro. Held at rc.12: transcribe-rs 0.3.12 does not compile against rc.13 or later. Still a release candidate, no stable 2.0 exists |
 | System voice | AVSpeechSynthesizer through objc2 bindings | MIT/Apache | §6.2; exact crate confirmed on docs.rs before use |
 | Phonemes | `misaki-rs` 0.9.0, `default-features = false` | MIT | pure Rust, embedded en-US/en-GB lexicon; its default `espeak` feature (GPL) stays off |
 | LLM HTTP | `reqwest` (rustls) + hand-written SSE parsing | MIT/Apache | needs non-standard fields (`timings`, `chat_template_kwargs`, `grammar`) and a strict network policy; `async-openai` hides both |
@@ -148,8 +149,8 @@ switching.
 back to the display under the pointer. The capture filter excludes glance's own
 windows so the overlay never appears in a screenshot.
 
-**Image handling.** One capture, downscaled per tier (FAST long edge ≤ 1280 px,
-DEEP ≤ 2048 px, both configurable), PNG with fast compression, base64 data URI.
+**Image handling.** One capture, downscaled per tier (FAST long edge ≤ 1024 px,
+chosen from the M0 measurements in §7.2; DEEP ≤ 2048 px; both configurable), PNG with fast compression, base64 data URI.
 Never a remote URL: llama-server would fetch it.
 
 **Prompt layout and prewarm (the main latency lever).** Messages are
@@ -159,8 +160,17 @@ llama-server caches the prompt prefix by default (`cache_prompt`), so by the tim
 the user stops talking the image is already processed and the real request only
 has to evaluate the transcript. Follow-ups are always warm. DEEP is prewarmed after
 FAST finishes its prewarm; whether that slows FAST too much is measured in M4.
-This whole mechanism depends on llama-server reusing a cached image prefix, which
-is the first thing M0 verifies.
+This whole mechanism depends on llama-server reusing a cached image prefix.
+
+M0 verified it on a real screenshot with Qwen3-VL-4B (`glance cache-check`): the
+image-only prewarm evaluated 665 tokens in 1.8 s; the question that followed
+reused 660 of them, evaluated 15, and produced its first token in 214 ms; a
+follow-up reused 718 tokens. Two things learned along the way:
+- It is model-specific. LFM2.5-VL-3B re-evaluated the whole image for the
+  question (0 tokens reused), although its follow-ups were cached. Every new
+  FAST or DEEP candidate must pass `glance cache-check` before it is considered.
+- llama-server also keeps earlier prompts in a RAM cache, so going back to a
+  screenshot it has already seen is warm again.
 
 **Speech out.** `SentenceChunker` splits on sentence ends (guarding decimals and
 abbreviations); the first chunk may flush early at a clause boundary to cut TTFA.
@@ -192,10 +202,26 @@ Caveat: this is CPU, not Metal. If the M0 spike misses the budget, Whisper and t
 format rule get revisited with the maintainer before anything changes.
 
 The M0 spike compares Parakeet v2 (English) vs v3 (25 languages) vs Moonshine on
-recorded speech: latency and word errors. Both Parakeet exports are CC-BY-4.0
+recorded speech: latency and word errors (results below). Both Parakeet exports are CC-BY-4.0
 (attribution recorded in `models.toml` and an in-app licences list) from the
 third-party repo `istupakov/parakeet-tdt-0.6b-v{2,3}-onnx`, pinned by commit and
 hash. `transcribe.cpp` (new, MIT, same author as transcribe-rs) is a watch item.
+
+**M0 result (measured, M4 Pro, CPU only).** 16 synthetic clips (macOS `say`, two
+voices, 1.8–3.4 s each, 158 words):
+
+| Model | Speed | 3 s clip | Word errors | Load |
+|---|---|---|---|---|
+| Parakeet TDT 0.6b v3 int8 | 34.6x real time | ~90 ms | 2/158, both British spellings ("summarise"), so effectively 0 | 0.5 s (+0.3 s hash check) |
+| Parakeet TDT 0.6b v2 int8 | 35.2x real time | ~90 ms | 0/158 | 0.5 s (+0.3 s hash check) |
+
+Both are far inside the 300 ms budget, so Parakeet stays and Whisper is not
+needed. v3 is the default (same speed, 25 languages); v2 is pinned as the
+English-only alternative. Moonshine was not benchmarked: transcribe-rs's
+Moonshine models are distributed from a host that is not on the download
+allowlist, and Parakeet already leaves no latency to win. Synthetic speech is
+clean, so accuracy on a real voice in a real room is still to be confirmed by
+running `glance spike`.
 
 ## 6. TTS
 
@@ -263,6 +289,17 @@ fall back to `ort`'s checksum-verified download and tell the maintainer. The sam
 fallback applies if Homebrew's 1.32 does not work with `ort` rc.15 (which targets
 the 1.31 API). CPU execution is expected to be enough for both Kokoro and Parakeet.
 
+**M0 outcome: the gate failed, so the fallback is in use.** `otool -L` on
+Homebrew's `libonnxruntime.1.32.0.dylib` lists `libonnx`, `libonnx_proto`,
+`libprotobuf-lite`, `libre2`, and about 80 abseil dylibs, all under the Homebrew
+prefix. glance therefore builds with `ort`'s download: the `ort-sys` 2.0.0-rc.12
+build script fetches ONNX Runtime 1.24.2 for `aarch64-apple-darwin` from
+`cdn.pyke.io`, checks it against the SHA-256 listed in the crate, and links it
+statically, so there is no dylib to bundle or sign. This is a build-time
+download only. `deny.toml` carries the three narrow exceptions it needs
+(`ureq`, `native-tls`, and the root-certificate data licence, each allowed only
+underneath `ort-sys`'s build script).
+
 ## 7. LLM tiers, endpoints, escalation
 
 ### 7.1 Endpoints
@@ -312,6 +349,33 @@ fixed local set of screenshots × questions, kept in a gitignored folder, measur
 cold and warm time-to-first-token, tokens/s, resident memory, escalation-format
 compliance, and answer quality against a short rubric that the maintainer
 spot-checks. The winner is reported with numbers, not guessed in advance.
+
+**M0 FAST bake-off (measured, M4 Pro, llama-server 1.0.0, Q4_K_M, ctx 8192).**
+Six synthetic screens (`eval/`), 30 read-the-screen questions (12 of them about
+fine detail) and 6 questions that should be escalated. "Edge" is the longest
+image edge sent. Cold = processing a new image; warm = image already prewarmed.
+
+| Model | Edge | Correct | Image tokens | Cold image | Warm first token | Warm first sentence | Speed | Easy answered directly | Hard escalated | Malformed | Memory |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **Qwen3-VL-4B** | **1024** | **30/30** | 719 | **1.5 s** | 46 ms | 243 ms | 72 tok/s | 29/30 | 6/6 | 0 | 4.5 GB |
+| Qwen3-VL-4B | 1280 | 30/30 | 1087 | 2.4 s | 52 ms | 234 ms | 72 tok/s | 29/30 | 6/6 | 0 | |
+| Qwen3-VL-4B | 896 | 28/30 | 551 | 1.2 s | 44 ms | 232 ms | 72 tok/s | 29/30 | 6/6 | 0 | |
+| Qwen3-VL-8B | 1024 | 30/30 | 719 | 2.5 s | 69 ms | 275 ms | 44 tok/s | 19/30 | 6/6 | 0 | 6.3 GB |
+| Qwen3-VL-8B | 1280 | 30/30 | 1087 | 4.1 s | 74 ms | 278 ms | 43 tok/s | 17/30 | 6/6 | 0 | |
+| LFM2.5-VL-3B | 1280 | 29/30 | 1839 | 3.1 s | 3.1 s | 3.2 s | 107 tok/s | 23/30 | 1/6 | 12 | 1.6 GB |
+
+**FAST = Qwen3-VL-4B at 1024 px.** It answers everything the 8B does on this
+set, processes a new image in 60% of the time, generates 1.6x faster, uses
+1.8 GB less memory, and follows the escalation format without a single
+malformed reply. The 8B escalated 11–13 easy questions it could have answered,
+which would send needless work to DEEP. LFM2.5-VL-3B is the fastest generator
+but is ruled out twice over: no image-prefix reuse (so every question waits
+3 s) and it often invents its own JSON instead of the fixed escalate object.
+
+Limits of this result: the screens are synthetic and both Qwen models hit the
+ceiling, so the set cannot show where the 8B reads better than the 4B. If real
+use turns up screens the 4B misreads, rerun with those. Memory is
+llama-server's physical footprint after the run.
 
 ### 7.3 Escalation schema
 
@@ -510,13 +574,38 @@ Mic start-up may clip the first syllable (CoreAudio stream start). Measured in M
 the mitigation is building the stream at launch and only starting it on key-down,
 provided the microphone indicator stays off while it is paused.
 
+**Measured in M0** (M4 Pro, Qwen3-VL-4B, Parakeet v3; `glance spike`, `glance
+mic-check`, `glance bench`):
+
+| Stage | Target | Measured |
+|---|---|---|
+| Read + decode a 3024x1964 PNG | ≤ 80 ms (capture) | 9 ms (live capture comes in M2) |
+| Downscale + PNG encode | ≤ 60 ms | 33 ms at 1280 px |
+| FAST image prewarm | 1.5–3 s | 1.5 s at 1024 px, 2.4 s at 1280 px |
+| Mic: first samples after start | — | 65 ms (stream open returns at ~103 ms) |
+| Resample 48 kHz → 16 kHz | ≤ 30 ms | 1–2 ms |
+| STT | ≤ 300 ms | 116 ms for a 2.7 s clip (~35x real time) |
+| FAST first token, warm | ≤ 350 ms | 46–84 ms |
+| First complete sentence, warm | ≤ 350 ms after first token | ~240–290 ms after the request |
+| **Key-up → first complete sentence** | — | **404 ms** (end to end, synthetic clip) |
+
+So with the image prewarmed, a reply is ready to be spoken about 0.4 s after
+key-up, which leaves roughly 0.9 s of the 1.3 s target for TTS (M1). The 65 ms
+mic start is shorter than the time it takes to begin speaking after pressing a
+key, so the stream is opened on key-down and no always-open stream is needed.
+An utterance shorter than the prewarm (about 1.5 s) waits for the remainder.
+The microphone path was exercised with level statistics only; a spoken
+end-to-end run is `glance spike` (see README).
+
 ## 13. Not yet verified, and where it gets settled
 
 | Open item | Settled in |
 |---|---|
-| llama-server reuses a cached image prefix across requests (prewarm relies on it) | M0, first task (`timings.cache_n`) |
-| Homebrew `libonnxruntime` has no other Homebrew dependencies (`otool -L`) and works with `ort` rc.15 | M0 STT spike |
-| Parakeet meets the STT budget | M0 STT spike |
+| llama-server reuses a cached image prefix across requests | **Settled in M0: yes for Qwen3-VL, no for LFM2.5-VL-3B** (§4) |
+| Homebrew `libonnxruntime` has no other Homebrew dependencies | **Settled in M0: it has many; `ort`'s verified download is used** (§6.4) |
+| Parakeet meets the STT budget | **Settled in M0: ~90 ms for a 3 s clip** (§5) |
+| STT accuracy on a real voice in a real room (M0 used synthetic speech) | first spoken `glance spike` run |
+| Whether the 8B reads real screens better than the 4B (synthetic set hit the ceiling) | real use; rerun `glance bench` with harder screens |
 | Chat endpoint accepts `grammar` with `stream: true`; streamed `reasoning_content` field | M0 / M4 |
 | AVSpeechSynthesizer via objc2 bindings: delegate callbacks, run loop in a CLI | M1 |
 | misaki-rs phonemes match Kokoro's vocab; quality of the no-espeak fallback | M1 time-boxed spike |
