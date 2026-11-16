@@ -8,3 +8,9 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+glance-audio.workspace = true
+thiserror.workspace = true
+transcribe-rs.workspace = true
+ort.workspace = true

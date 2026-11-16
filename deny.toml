@@ -25,7 +25,11 @@ allow = [
     "Unicode-3.0",
 ]
 confidence-threshold = 0.9
-exceptions = []
+exceptions = [
+    # Mozilla's root certificate bundle (a permissive data licence). Pulled in
+    # only by ureq inside ort-sys's build script.
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+]
 
 [licenses.private]
 # Workspace crates are `publish = false` and have no licence chosen yet.
@@ -40,14 +44,19 @@ highlight = "all"
 deny = [
     # Network policy: only the downloader and the LLM client may talk HTTP.
     { crate = "reqwest", wrappers = ["glance-models", "glance-llm-client"], reason = "HTTP is allowed only in the models and llm-client crates" },
-    { crate = "ureq", reason = "single HTTP client policy; also what build scripts use to download binaries" },
+    # Build-time exception: ort-sys's build script uses ureq (with native-tls,
+    # which is Apple's Security framework on macOS, not OpenSSL) to download
+    # ONNX Runtime from cdn.pyke.io and verify it against a SHA-256 shipped in
+    # the crate. Nothing else may use either crate, and neither is linked into
+    # glance. See docs/DESIGN.md §6.4.
+    { crate = "ureq", wrappers = ["ort-sys"], reason = "single HTTP client policy; build-time use by ort-sys only" },
     { crate = "curl", reason = "single HTTP client policy" },
     { crate = "isahc", reason = "single HTTP client policy" },
     { crate = "attohttpc", reason = "single HTTP client policy" },
     { crate = "surf", reason = "single HTTP client policy" },
     # TLS: rustls only, no system OpenSSL.
     { crate = "openssl-sys", reason = "use rustls" },
-    { crate = "native-tls", reason = "use rustls" },
+    { crate = "native-tls", wrappers = ["ureq"], reason = "use rustls; build-time use via ort-sys only" },
 ]
 
 [sources]
