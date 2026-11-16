@@ -5,3 +5,46 @@ version = 4
 [[package]]
 name = "glance"
 version = "0.1.0"
+dependencies = [
+ "glance-models",
+ "glance-orchestrator",
+]
+
+[[package]]
+name = "glance-audio"
+version = "0.1.0"
+
+[[package]]
+name = "glance-capture"
+version = "0.1.0"
+
+[[package]]
+name = "glance-llm-client"
+version = "0.1.0"
+
+[[package]]
+name = "glance-models"
+version = "0.1.0"
+
+[[package]]
+name = "glance-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "glance-audio",
+ "glance-capture",
+ "glance-llm-client",
+ "glance-stt",
+ "glance-tts",
+]
+
+[[package]]
+name = "glance-stt"
+version = "0.1.0"
+
+[[package]]
+name = "glance-tts"
+version = "0.1.0"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"

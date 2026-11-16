@@ -1,0 +1,57 @@
+# cargo-deny policy for glance. Run `cargo deny check` before every milestone
+# is called done (see CLAUDE.md). Design background: docs/DESIGN.md §11.
+
+[graph]
+# v1 ships for Apple Silicon macOS only.
+targets = ["aarch64-apple-darwin"]
+all-features = true
+
+[advisories]
+# Vulnerability, unmaintained and unsound advisories are errors by default.
+# Any exception goes here with an id and a reason.
+ignore = []
+
+[licenses]
+# Allowlist: anything not named here fails, which is how GPL/AGPL/LGPL stay out
+# (decision 3 in docs/DESIGN.md §0). Additions need a reason in the commit.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+exceptions = []
+
+[licenses.private]
+# Workspace crates are `publish = false` and have no licence chosen yet.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# Every external dependency must carry an explicit version requirement.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = [
+    # Network policy: only the downloader and the LLM client may talk HTTP.
+    { crate = "reqwest", wrappers = ["glance-models", "glance-llm-client"], reason = "HTTP is allowed only in the models and llm-client crates" },
+    { crate = "ureq", reason = "single HTTP client policy; also what build scripts use to download binaries" },
+    { crate = "curl", reason = "single HTTP client policy" },
+    { crate = "isahc", reason = "single HTTP client policy" },
+    { crate = "attohttpc", reason = "single HTTP client policy" },
+    { crate = "surf", reason = "single HTTP client policy" },
+    # TLS: rustls only, no system OpenSSL.
+    { crate = "openssl-sys", reason = "use rustls" },
+    { crate = "native-tls", reason = "use rustls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

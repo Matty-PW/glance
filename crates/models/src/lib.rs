@@ -1,0 +1,5 @@
+//! Model manifest (`models.toml`) parsing, download, and verification.
+//!
+//! The only crate that downloads anything, and one of the two allowed to depend
+//! on an HTTP client (enforced in `deny.toml`). Nothing is loaded unless it
+//! matches its pinned size and SHA-256. See `docs/DESIGN.md` §8.

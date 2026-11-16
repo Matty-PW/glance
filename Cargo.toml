@@ -1,6 +1,30 @@
-[package]
-name = "glance"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
+publish = false
 
-[dependencies]
+[workspace.lints.rust]
+# Crates that need `unsafe` (platform bindings) must opt out explicitly and say why.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+
+[workspace.dependencies]
+# Internal crates.
+glance-audio = { path = "crates/audio" }
+glance-capture = { path = "crates/capture" }
+glance-llm-client = { path = "crates/llm-client" }
+glance-models = { path = "crates/models" }
+glance-orchestrator = { path = "crates/orchestrator" }
+glance-stt = { path = "crates/stt" }
+glance-tts = { path = "crates/tts" }
+
+# External crates are added here, one milestone at a time, with exact pins
+# (`=x.y.z`) and only after reading their current docs.rs pages (see CLAUDE.md).

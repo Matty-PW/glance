@@ -1,0 +1,22 @@
+# glance model manifest. Compiled into the binary; nothing is downloaded or
+# loaded unless it is listed here and matches its pinned size and SHA-256.
+# Design and rules: docs/DESIGN.md §8. Entries are added per milestone, after
+# the published and locally computed hashes have been compared.
+#
+# Entry shape:
+#
+#   [[model]]
+#   id       = "example-model-q4km"
+#   role     = "vlm"                  # vlm | stt | tts
+#   license  = "Apache-2.0"           # required
+#   repo     = "org/repo"             # on huggingface.co
+#   revision = "<40-hex commit>"      # never a branch name
+#
+#     [[model.file]]
+#     path   = "file.gguf"
+#     kind   = "weights"              # weights | mmproj | voice | aux
+#     format = "gguf"                 # gguf | onnx | safetensors | raw-f32 | text
+#     size   = 0                      # exact bytes
+#     sha256 = "<64 hex>"
+
+schema = 1

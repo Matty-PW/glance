@@ -1,1 +1,50 @@
-/target
+# Build output
+target/
+
+# Model weights and voices: never committed (see CLAUDE.md). They live in
+# ~/Library/Application Support/glance/models/, outside the repo.
+models/
+# ...but the `models` crate (manifest + downloader source) is tracked.
+!/crates/models/
+.partial/
+*.part
+*.gguf
+*.onnx
+*.onnx.data
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.pkl
+*.ckpt
+*.npz
+
+# Audio and screen content: memory only. These cover --debug-dump output and
+# local evaluation sets.
+*.wav
+*.flac
+*.mp3
+screenshots/
+debug-dump*/
+eval-local/
+# PNGs are ignored everywhere. When the app icon lands (M2), allow that one
+# directory explicitly instead of loosening this rule.
+*.png
+
+# Secrets and signing material
+.env*
+*.p12
+*.pem
+*.key
+*.cer
+*.mobileprovision
+
+# App bundles produced by `cargo xtask bundle`
+*.app/
+*.dmg
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp

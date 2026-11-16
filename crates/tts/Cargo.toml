@@ -1,0 +1,10 @@
+[package]
+name = "glance-tts"
+description = "Local text-to-speech behind a trait, with sentence chunking"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

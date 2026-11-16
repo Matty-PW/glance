@@ -1,0 +1,17 @@
+[package]
+name = "glance-orchestrator"
+description = "Turn state machine and session logic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glance-capture.workspace = true
+glance-audio.workspace = true
+glance-stt.workspace = true
+glance-tts.workspace = true
+glance-llm-client.workspace = true

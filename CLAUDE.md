@@ -20,11 +20,18 @@ M4 Pro, 48GB.
   shell, no file access, and no actions. Model output is only ever displayed
   and spoken. The escalate signal is parsed strictly from a fixed schema.
 - Model weights are never committed to git. They download to
-  ~/Library/Application Support/glance/models/ from huggingface.co only
-  (allowlist in code), over HTTPS, and must match a pinned SHA-256 in
-  `models.toml` before use. Accept GGUF, ONNX, and safetensors only. Never load
-  pickle-based formats (.pt, .pth, .bin). Record each model's license in
+  ~/Library/Application Support/glance/models/ over HTTPS. Every download
+  starts at huggingface.co and may follow redirects only to an exact allowlist
+  of Hugging Face-operated `*.hf.co` CDN hosts (list in code). Files must match
+  a pinned SHA-256 in `models.toml` before use. Accept GGUF, ONNX, and
+  safetensors only. Never load pickle-based formats (.pt, .pth, .bin). Two
+  narrow exceptions, both SHA-256-pinned in `models.toml` like any other file:
+  Kokoro voice files (`raw-f32` .bin, read as plain little-endian floats with a
+  length check, no deserializer) and plain-text aux files (vocab, config,
+  tokenizer; parsed as text or JSON only). Record each model's license in
   `models.toml`.
+- No GPL, AGPL, or LGPL dependencies (so no espeak-ng). `deny.toml` enforces
+  this with a licence allowlist.
 - Never run `curl | sh` or install scripts from the internet. Tell me what a
   dependency or download is and why before adding it.
 

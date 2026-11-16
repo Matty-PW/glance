@@ -1,0 +1,18 @@
+title = "glance secret scanning"
+
+# Start from gitleaks' built-in rules (API keys, tokens, private keys, ...).
+[extend]
+useDefault = true
+
+# CLAUDE.md: never commit personal paths. Flags absolute paths inside a home
+# directory, which leak a username and machine layout.
+[[rules]]
+id = "personal-home-path"
+description = "Absolute path inside a user's home directory"
+regex = '''(?:/Users|/home)/[A-Za-z0-9._-]+/'''
+keywords = ["/Users/", "/home/"]
+
+  [[rules.allowlists]]
+  description = "Shared, CI, and placeholder locations"
+  regexTarget = "match"
+  regexes = ['''(?:/Users|/home)/(?:Shared|runner|you|user|username|USER)/''']

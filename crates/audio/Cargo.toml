@@ -1,0 +1,10 @@
+[package]
+name = "glance-audio"
+description = "Microphone input and speaker output behind traits"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
