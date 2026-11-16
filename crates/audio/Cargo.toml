@@ -8,3 +8,8 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+cpal.workspace = true
+rubato.workspace = true
+thiserror.workspace = true
