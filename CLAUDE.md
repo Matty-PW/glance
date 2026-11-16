@@ -43,7 +43,8 @@ M4 Pro, 48GB.
   `cargo deny check` before each milestone is called done.
 - Never commit secrets or personal paths. Run `gitleaks` (or equivalent) as a
   pre-commit hook.
-- Commit after each milestone with a clear message. NEVER push. I push.
+- Commit after each crate or logical unit of work, not only at the end of a
+  milestone, each with a clear message. NEVER push. I push.
 
 ## Working rules
 - Before using any crate, check its current docs on docs.rs. Don't rely on memory
