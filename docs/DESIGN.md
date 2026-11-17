@@ -409,6 +409,12 @@ ceiling, so the set cannot show where the 8B reads better than the 4B. If real
 use turns up screens the 4B misreads, rerun with those. Memory is
 llama-server's physical footprint after the run.
 
+**M4 DEEP bake-off (measured).** Qwen3.8-27B is too slow for a spoken reply
+on this machine: key-up to DEEP's first word was 50 s median at
+`reasoning_effort = medium` (61 s at low, 143 s at xhigh), against a budget
+of ~5 s. Its hybrid architecture also defeats the image prewarm in §4 (prompt
+re-evaluated every time). Numbers and causes: `docs/PROGRESS.md`.
+
 ### 7.3 Escalation schema
 
 FAST either answers in plain speech, or outputs exactly one JSON object and nothing

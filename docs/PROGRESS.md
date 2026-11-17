@@ -64,14 +64,36 @@ Done:
   servers.
 
 Left:
-1. Choose and pin DEEP candidates (DESIGN §7.2), download (17–22 GB each,
-   needs the maintainer's OK), run the DEEP bake-off.
+1. DEEP: Qwen3.8-27B pinned and benchmarked (below): far too slow. Decide
+   next steps (prefix reuse, thinking budget, image size, or the MoE).
 2. A `glance bench` mode for escalated turns (filler and DEEP timings,
    format compliance with and without the grammar).
 3. Measure whether DEEP's background prewarm slows FAST (DESIGN §4).
 4. Pre-synthesize the filler lines when Kokoro is the voice.
 5. Managed servers are orphaned if glance crashes (macOS has no
    parent-death signal); only Quit and Ctrl-C stop them.
+
+**DEEP bake-off, Qwen3.8-27B Q4_K_M (bartowski), MTP on (`glance deep-bench`).**
+Six hard eval questions, 2048 px image, FAST Qwen3-VL-4B alongside. FAST
+escalated 6/6 in 0.27–0.30 s (grammar on). DEEP: 19.4 GB resident, 18–25
+tok/s, MTP accepted 55–86% of drafted tokens. Times are median / max:
+
+| Effort | Thinking | Answer | DEEP request → first word | Key-up → first word | Same, if the image were reused |
+|---|---|---|---|---|---|
+| low | 30.5 / 83.6 s | 6.1 / 10.5 s | 60.5 / 114.8 s | 60.9 / 115.2 s | ~31.6 / 87.9 s |
+| medium | 20.4 / 57.7 s | 4.4 / 11.9 s | 50.0 / 91.9 s | 50.4 / 92.3 s | ~22.4 / 61.9 s |
+| xhigh | 112.6 / 245.3 s | 6.3 / 14.6 s | 142.3 / 276.2 s | 142.7 / 276.6 s | ~103.4 / 249.2 s |
+
+Budget is ~5 s from key-up. **No effort level is acceptable.** Two causes:
+1. The prewarm is never reused: Qwen3.8 is a hybrid (attention + recurrent)
+   model, llama.cpp restores such state only from checkpoints, and the
+   checkpoint sits at the end of the prewarm, past where the question
+   diverges. Every question re-evaluates ~2,720 tokens (28 s median);
+   `--checkpoint-min-step 64` did not help.
+2. Thinking alone takes 15–245 s. `medium` thought less than `low` on this
+   set (fewer tokens in 5 of 6).
+
+Answers are in `eval-local/results/deep-qwen3.8-27b.json` for spot-checking.
 
 ## What is measured
 
