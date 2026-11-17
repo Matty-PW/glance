@@ -58,3 +58,18 @@ M4 Pro, 48GB.
   decisions.
 - Work on one milestone at a time. Use subagents only for scoped, read-only
   research. Don't parallelize edits to the same crate.
+
+## Current state (read before starting work)
+- `docs/PROGRESS.md` is the source of truth for status, measurements, open
+  items and the next step. `docs/DESIGN.md` §14 lists what is left in M2.
+- M0 and M1 are done. M2 is parked mid-way: live capture is done; the
+  orchestrator turn loop, `glance app` (hotkeys, tray, permissions) and
+  `cargo xtask bundle` are not started.
+- TTS is the macOS system voice through M4. Kokoro is parked; don't resume it
+  unless asked (what's left is in `docs/PROGRESS.md`).
+- `cargo deny check` fails on advisory RUSTSEC-2026-0542 (`humantime`, via
+  `transcribe-rs`). Waiting on my decision; don't add an ignore entry yourself.
+- Builds target macOS 14.2 (`.cargo/config.toml`). Only the Command Line Tools
+  are installed, not full Xcode; `crates/capture/build.rs` covers the Swift
+  link path for that.
+- `ort` is held at 2.0.0-rc.12 because `transcribe-rs` 0.3.12 needs it.
