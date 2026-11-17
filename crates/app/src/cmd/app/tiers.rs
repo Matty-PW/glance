@@ -27,7 +27,12 @@ pub fn shutdown() {
 #[derive(Debug, Clone)]
 pub enum Source {
     /// glance runs llama-server for this models.toml id.
-    Managed { id: String, ctx: u32 },
+    Managed {
+        id: String,
+        ctx: u32,
+        /// Extra llama-server flags (MTP, thinking budget), from config.
+        args: Vec<String>,
+    },
     /// The user's own server.
     External { endpoint: String, model: String },
 }
@@ -71,7 +76,7 @@ pub async fn start(source: Source) -> Result<Tier> {
             client: OpenAiClient::new(Endpoint::loopback(&endpoint, model)?)?,
             grammar: false,
         }),
-        Source::Managed { id, ctx } => {
+        Source::Managed { id, ctx, args } => {
             let spec = tokio::task::spawn_blocking(move || -> Result<ServerSpec> {
                 let manifest = manifest()?;
                 let model = find_model(&manifest, &id)?;
@@ -94,7 +99,7 @@ pub async fn start(source: Source) -> Result<Tier> {
                     show_output: false,
                     // Large DEEP models take a while to load.
                     start_timeout: Duration::from_secs(300),
-                    extra_args: Vec::new(),
+                    extra_args: args,
                 })
             })
             .await??;

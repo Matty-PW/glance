@@ -24,6 +24,9 @@
 //! # deep_model = "default"
 //! fast_ctx = 8192
 //! deep_ctx = 16384
+//! deep_effort = "medium"        # Qwen3.8 reasoning effort: low, medium, xhigh, or off
+//! deep_thinking_budget = 256    # cap on DEEP's thinking tokens (managed DEEP only)
+//! deep_mtp = true               # speculative decoding with the model's MTP layers
 //! ```
 
 use std::path::PathBuf;
@@ -51,6 +54,38 @@ pub struct ModelsConfig {
     pub deep_model: String,
     pub fast_ctx: u32,
     pub deep_ctx: u32,
+    pub deep_effort: String,
+    pub deep_thinking_budget: Option<u32>,
+    pub deep_mtp: bool,
+}
+
+impl ModelsConfig {
+    /// llama-server flags for a managed DEEP.
+    pub fn deep_server_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.deep_mtp {
+            args.extend(["--spec-type".to_owned(), "draft-mtp".to_owned()]);
+        }
+        if let Some(budget) = self.deep_thinking_budget {
+            args.extend([
+                "--reasoning-budget".to_owned(),
+                budget.to_string(),
+                "--reasoning-budget-message".to_owned(),
+                "Time is up. Answer now, briefly.".to_owned(),
+            ]);
+        }
+        args
+    }
+
+    /// Chat-template variables for every DEEP request (prewarm and question
+    /// must match, or the cached prefix would not).
+    pub fn deep_template_kwargs(&self) -> serde_json::Value {
+        if self.deep_effort == "off" {
+            serde_json::json!({"enable_thinking": false})
+        } else {
+            serde_json::json!({"reasoning_effort": self.deep_effort})
+        }
+    }
 }
 
 impl Default for ModelsConfig {
@@ -64,6 +99,9 @@ impl Default for ModelsConfig {
             deep_model: "default".into(),
             fast_ctx: 8192,
             deep_ctx: 16384,
+            deep_effort: "medium".into(),
+            deep_thinking_budget: Some(256),
+            deep_mtp: true,
         }
     }
 }
@@ -171,6 +209,12 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let config: Self = toml::from_str(text)?;
         config.speech.validate()?;
+        if !["off", "low", "medium", "xhigh"].contains(&config.models.deep_effort.as_str()) {
+            bail!(
+                "models.deep_effort must be off, low, medium or xhigh, got \"{}\"",
+                config.models.deep_effort
+            );
+        }
         for (name, ctx) in [
             ("fast_ctx", config.models.fast_ctx),
             ("deep_ctx", config.models.deep_ctx),

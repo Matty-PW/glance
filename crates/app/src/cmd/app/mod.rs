@@ -84,6 +84,7 @@ pub fn run(args: Args) -> Result<()> {
             None => Source::Managed {
                 id: models.fast.clone(),
                 ctx: models.fast_ctx,
+                args: Vec::new(),
             },
         },
     };
@@ -96,6 +97,7 @@ pub fn run(args: Args) -> Result<()> {
         (None, Some(id)) => Some(Source::Managed {
             id: id.clone(),
             ctx: models.deep_ctx,
+            args: models.deep_server_args(),
         }),
         (None, None) => None,
     };
@@ -132,7 +134,8 @@ pub fn run(args: Args) -> Result<()> {
                 hotkeys::TALK_LABEL,
                 hotkeys::LOOK_LABEL
             );
-            runtime.spawn(start(args, settings, fast, deep, key_events));
+            let deep_kwargs = models.deep_template_kwargs();
+            runtime.spawn(start(args, deep_kwargs, settings, fast, deep, key_events));
             Some(hotkeys)
         }
         Err(message) => {
@@ -158,6 +161,7 @@ pub fn run(args: Args) -> Result<()> {
 /// Load the speech model, build the pipeline, then run turns until exit.
 async fn start(
     args: Args,
+    args_deep_kwargs: serde_json::Value,
     settings: SpeechConfig,
     fast: Source,
     deep: Option<Source>,
@@ -212,6 +216,8 @@ async fn start(
         },
     };
     let deep_max_edge = TurnConfig::default().deep_max_edge;
+    let mut deep_body = TurnConfig::default().deep_extra_body;
+    deep_body.insert("chat_template_kwargs".into(), args_deep_kwargs.clone());
     let capture_edge = if deep.is_some() {
         args.capture_edge.max(deep_max_edge)
     } else {
@@ -233,6 +239,7 @@ async fn start(
         max_tokens: args.max_tokens,
         prewarm: !args.no_prewarm,
         grammar: fast.grammar,
+        deep_extra_body: deep_body,
         ..Default::default()
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
