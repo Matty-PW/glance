@@ -8,6 +8,7 @@ pub mod say;
 pub mod serve;
 pub mod spike;
 pub mod stt_bench;
+pub mod tts_bench;
 
 use std::time::Instant;
 
@@ -36,6 +37,43 @@ pub fn find_model<'a>(manifest: &'a Manifest, id: &str) -> Result<&'a Model> {
 
 pub fn store() -> Result<ModelStore> {
     Ok(ModelStore::default_location()?)
+}
+
+/// The Kokoro precisions in `models.toml`, by short name.
+pub const KOKORO_MODELS: &[(&str, &str)] = &[
+    ("fp32", "kokoro-82m-v1.0-fp32"),
+    ("fp16", "kokoro-82m-v1.0-fp16"),
+    ("q8f16", "kokoro-82m-v1.0-q8f16"),
+];
+pub const KOKORO_VOICES: &str = "kokoro-82m-v1.0-voices-en";
+
+/// Verified paths of a Kokoro model (`fp32`, `fp16`, `q8f16` or a full id):
+/// the ONNX file and tokenizer.json. Hashes every file first.
+pub fn kokoro_model_paths(name: &str) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    let id = KOKORO_MODELS
+        .iter()
+        .find(|(short, _)| *short == name)
+        .map_or(name, |(_, id)| id);
+    let manifest = manifest()?;
+    let model = find_model(&manifest, id)?;
+    let dir = store()?
+        .verified_dir(model)
+        .with_context(|| format!("run `glance models pull {id}` first"))?;
+    let onnx = model
+        .files
+        .iter()
+        .find(|f| f.kind == glance_models::Kind::Weights)
+        .with_context(|| format!("{id} has no weights file"))?;
+    Ok((dir.join(&onnx.path), dir.join("tokenizer.json")))
+}
+
+/// The verified Kokoro voices directory.
+pub fn kokoro_voices_dir() -> Result<std::path::PathBuf> {
+    let manifest = manifest()?;
+    let model = find_model(&manifest, KOKORO_VOICES)?;
+    store()?
+        .verified_dir(model)
+        .with_context(|| format!("run `glance models pull {KOKORO_VOICES}` first"))
 }
 
 /// Milliseconds with one decimal, for timing reports.

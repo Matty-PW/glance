@@ -8,11 +8,22 @@ use crate::{AudioClip, AudioError};
 /// Resample `clip` to `target_rate`. Returns a copy when the rate already
 /// matches.
 pub fn resample(clip: &AudioClip, target_rate: u32) -> Result<AudioClip, AudioError> {
-    if clip.sample_rate() == target_rate || clip.samples().is_empty() {
-        return Ok(AudioClip::new(clip.samples().to_vec(), target_rate));
+    // NaN or infinity would make the FFT resampler panic; play silence there.
+    let cleaned: Vec<f32>;
+    let input = if clip.samples().iter().all(|s| s.is_finite()) {
+        clip.samples()
+    } else {
+        cleaned = clip
+            .samples()
+            .iter()
+            .map(|&s| if s.is_finite() { s } else { 0.0 })
+            .collect();
+        &cleaned
+    };
+    if clip.sample_rate() == target_rate || input.is_empty() {
+        return Ok(AudioClip::new(input.to_vec(), target_rate));
     }
     let err = |e: &dyn std::fmt::Display| AudioError::Resample(e.to_string());
-    let input = clip.samples();
 
     let mut resampler = Fft::<f32>::new(
         clip.sample_rate() as usize,
@@ -49,6 +60,16 @@ mod tests {
 
     fn rms(samples: &[f32]) -> f32 {
         (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn non_finite_samples_become_silence_instead_of_a_panic() {
+        let mut clip = sine(24_000, 440.0, 0.5).samples().to_vec();
+        clip[100] = f32::NAN;
+        clip[200] = f32::INFINITY;
+        let out = resample(&AudioClip::new(clip, 24_000), 48_000).unwrap();
+        assert!(out.samples().iter().all(|s| s.is_finite()));
+        assert_eq!(out.sample_rate(), 48_000);
     }
 
     #[test]

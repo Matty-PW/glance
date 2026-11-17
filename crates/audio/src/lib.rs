@@ -4,10 +4,11 @@
 //! `Serialize`, no `Display`, and a `Debug` that prints only duration and
 //! rate, so samples cannot reach a log or a file by accident.
 //!
-//! Speaker output (`AudioOutput`) arrives with TTS in M1.
+//! Speaker output ([`AudioOutput`], [`Speaker`]) plays the Kokoro voice.
 //! See `docs/DESIGN.md` §2–4.
 
 mod mic;
+mod output;
 #[cfg(target_os = "macos")]
 pub mod permission;
 mod resample;
@@ -16,12 +17,15 @@ use std::fmt;
 use std::time::Duration;
 
 pub use mic::Microphone;
+pub use output::{AudioOutput, PlaybackEvent, PlaybackListener, Speaker};
 pub use resample::resample;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
     #[error("no microphone found")]
     NoInputDevice,
+    #[error("no speaker or headphones found")]
+    NoOutputDevice,
     #[error("microphone uses an unsupported sample format ({0})")]
     UnsupportedFormat(String),
     #[error("audio device error: {0}")]

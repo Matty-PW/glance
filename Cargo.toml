@@ -53,6 +53,9 @@ transcribe-rs = { version = "=0.3.12", features = ["onnx"] }
 # Its build script downloads ONNX Runtime 1.24.2 from cdn.pyke.io and checks it
 # against a SHA-256 shipped in the crate (docs/DESIGN.md §6.4 fallback).
 ort = "=2.0.0-rc.12"
+# Kokoro's phonemizer: pure Rust port of Misaki. The `espeak` feature (GPL
+# espeak-ng) stays off. Data provenance caveat: THIRD_PARTY.md.
+misaki-rs = { version = "=0.9.0", default-features = false }
 # Bindings to Apple frameworks, used by the system-voice TTS (AVSpeechSynthesizer).
 objc2 = "=0.6.5"
 objc2-avf-audio = { version = "=0.3.2", default-features = false, features = ["std", "AVSpeechSynthesis"] }

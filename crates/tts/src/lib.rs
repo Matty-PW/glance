@@ -1,10 +1,11 @@
 //! Text-to-speech behind the [`TextToSpeech`] trait, plus [`SentenceChunker`],
 //! which turns streamed model output into speakable sentences.
 //!
-//! The macOS system voice is the first implementation (M1). Kokoro follows if
-//! the phonemizer spike passes. See `docs/DESIGN.md` §6.
+//! Two engines: the macOS system voice (M1) and Kokoro-82M on ONNX Runtime.
+//! See `docs/DESIGN.md` §6.
 
 mod chunker;
+pub mod kokoro;
 mod speakable;
 #[cfg(target_os = "macos")]
 pub mod system_voice;
