@@ -1,7 +1,7 @@
 # glance — design
 
-Status: approved design for v1, written 2026-11-16. M0 and M1 are done; M2 is in
-progress (see §14). Measurements are recorded in §4, §5, §6, §7.2, §12 and §13;
+Status: approved design for v1, written 2026-11-16. M0 and M1 are done; M2's code
+is done and awaits the maintainer's acceptance run (see §14). Measurements are recorded in §4, §5, §6, §7.2, §12 and §13;
 the running status and what is left are in `docs/PROGRESS.md`. Read together with
 `CLAUDE.md`, whose security and privacy rules take precedence over anything here.
 
@@ -626,7 +626,7 @@ end-to-end run is `glance spike` (see README).
 | System-voice quality is good enough for daily use (all M1 tests ran at volume 0) | maintainer listening test |
 | A chord claimed by a macOS system shortcut may register without error yet never fire | M2 |
 | Permission grants persist across rebuilds with a stable signing identity | M2 |
-| ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`** (code done; not yet run on a real screen) |
+| ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`**; live capture ran on a real screen (46–49 ms at 2048 px). The exclusion itself is visible only once the M5 overlay exists |
 | `cargo deny` advisory RUSTSEC-2026-0542 (`humantime` unmaintained, via `transcribe-rs`) | maintainer decision: ignore with reason, or replace the dependency |
 | Vision support of models served through Ollama/LM Studio endpoints | M4 |
 | egui overlay stays non-activating without a shim | M5 |
@@ -649,25 +649,23 @@ end-to-end run is `glance spike` (see README).
   system-voice implementation; the reply is spoken sentence by sentence and TTFA
   is reported (354–546 ms key-up to first sound). The phonemizer spike passed;
   the Kokoro implementation is parked (§6.3).
-- **M2** (in progress): `Glance.app` with hotkeys, live capture, tray status,
-  permission checklist. Done: live capture of the active display
-  (`crates/capture/src/live.rs`). Left, in order:
+- **M2** (code done, acceptance pending): `Glance.app` with hotkeys, live
+  capture, tray status, permission checklist. Built:
   1. Orchestrator turn state machine (`crates/orchestrator`): press starts the
      mic and capture + prewarm, release transcribes, asks FAST and speaks;
      a press during a turn cancels it; presses under 250 ms only cancel;
      recordings cap at 60 s; one latency log line per turn. Tested with mocks.
-  2. `glance app`: `NSApplication` run loop with the Accessory policy (no Dock
-     icon; the same loop delivers speech callbacks), `global-hotkey`
-     registration of both chords, `tray-icon` status and menu (status line,
-     permissions checklist with System Settings links, Quit), tray updates
-     posted to the main thread with `dispatch2`.
+  2. `glance app`: `NSApplication` run loop with the Accessory policy,
+     `global-hotkey` registration of both chords, `tray-icon` status and menu
+     (status line, permissions checklist with System Settings links, Quit),
+     tray updates posted to the main thread with `dispatch2`.
   3. Permission helpers: Screen Recording preflight and request
      (CoreGraphics), microphone status (`AVCaptureDevice`).
   4. `cargo xtask bundle`: `Glance.app` with bundle ID
-     `io.github.matty-pw.glance`, `LSUIElement`, usage strings, audio-input
+     `io.github.matty-pw.glance`, `LSUIElement`, usage string, audio-input
      entitlement, hardened runtime, signed with `GLANCE_SIGN_IDENTITY`
-     (ad-hoc with a warning when unset); print the designated requirement.
-  5. `glance capture-check`: one live capture, printing only size and timing.
+     (ad-hoc with a warning when unset); prints the designated requirement.
+  5. `glance capture-check`: live captures, printing only size and timing.
   Until M5's settings, the app takes its endpoint as launch arguments
   (`open Glance.app --args app --endpoint ...`). Acceptance includes: both
   chords register at startup, a registration failure produces a visible error

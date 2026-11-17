@@ -62,9 +62,9 @@ M4 Pro, 48GB.
 ## Current state (read before starting work)
 - `docs/PROGRESS.md` is the source of truth for status, measurements, open
   items and the next step. `docs/DESIGN.md` §14 lists what is left in M2.
-- M0 and M1 are done. M2 is parked mid-way: live capture is done; the
-  orchestrator turn loop, `glance app` (hotkeys, tray, permissions) and
-  `cargo xtask bundle` are not started.
+- M0 and M1 are done. M2's code is done (orchestrator turn loop, `glance
+  app`, permissions, `cargo xtask bundle`, `capture-check`); its acceptance
+  run (signed bundle, chord presses, grants surviving rebuilds) needs me.
 - TTS is the macOS system voice through M4. Kokoro is parked; don't resume it
   unless asked (what's left is in `docs/PROGRESS.md`).
 - `cargo deny check` fails on advisory RUSTSEC-2026-0542 (`humantime`, via

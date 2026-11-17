@@ -11,7 +11,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | Step 2: skeleton, hooks, CI, `deny.toml` | Done. CI has not been observed running on GitHub yet |
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
 | M1: TTS with sentence streaming | Done on the macOS system voice. **Kokoro parked** (see below) |
-| M2: hotkey, live capture, `.app`, permissions | **Parked mid-way.** Live capture done; the rest is listed below |
+| M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3–M5 | Not started |
 
 ## Decision: Kokoro parked (2026-11-17)
@@ -63,6 +63,11 @@ LFM2.5-VL-3B reused nothing for the first question.
 | Qwen3-VL-8B | 1024 | 30/30 | 2.5 s | 44 tok/s | 19/30 | 6/6 | 0 | 6.3 GB |
 | LFM2.5-VL-3B | 1280 | 29/30 | 3.1 s | 107 tok/s | 23/30 | 1/6 | 12 | 1.6 GB |
 
+**Live capture (M2).** `glance capture-check` on the built-in display:
+capture at 2048 px 46–49 ms warm, 112 ms for the first; at full size
+(3024x1955) 53–169 ms; downscale + PNG to 1024 px 14 ms. Capture runs at
+key-down, alongside the user's speech, so it is off the TTFA path.
+
 **Time to first audio, system voice (M1).** Key-up to first sound over six
 `glance spike` runs: 354–546 ms (target 1.3 s), including uncached images
 (M0: 404 ms to first complete sentence). All runs at volume 0.
@@ -85,6 +90,19 @@ LFM2.5-VL-3B reused nothing for the first question.
   thread pumping that loop and runs the pipeline on tokio worker threads.
 - **No GPL code**: `misaki-rs` with `default-features = false`, plus an
   in-house fallback for unknown words instead of espeak-ng.
+- **M2 turn loop** (`crates/orchestrator`): the microphone and STT each run
+  on their own OS thread fed by a channel, so a stop never overtakes its
+  start. A cancelled turn's task is aborted (dropping the chat stream cancels
+  it on the server); its leftover speech events are ignored by utterance id.
+  A failed turn speaks a fixed local line ("Sorry, I didn't catch that").
+- **Permissions**: Screen Recording is requested at launch (the prompt shows
+  once; a grant needs a relaunch). Microphone status is read only; macOS
+  prompts on the first stream open, so the very first press records silence
+  and glance says to check the permission.
+- **Tray** shows state as a short marker next to the icon (● listening,
+  … working, ▸ speaking, ! fatal) because there is no overlay until M5.
+- **Signing** uses `--timestamp=none`: a secure timestamp contacts Apple and
+  is only needed for notarization.
 - **Builds target macOS 14.2**, and `crates/capture/build.rs` lets the
   ScreenCaptureKit Swift bridge link with only the Command Line Tools.
 
@@ -96,10 +114,14 @@ LFM2.5-VL-3B reused nothing for the first question.
    entry with a reason in `deny.toml`, or replace/patch the dependency.
 2. Nobody has listened to either voice or run `glance spike` with a real voice.
 3. Only default-quality system voices are installed; a Premium one is better.
-4. The system-voice code has no automated test; `cargo test` runs no main
-   run loop. The chunker and text cleanup are covered (15 tests).
+4. The system-voice, hotkey and tray code have no automated tests (they need
+   a main run loop). The orchestrator is covered with mocks (15 tests).
 5. Both Qwen models hit the ceiling of the synthetic set, so it cannot show
    where the 8B reads better than the 4B.
+6. Not yet observed: a physical press of either chord, a turn through the
+   bundled app, and grants surviving rebuilds (all need the maintainer).
+7. `glance spike` keeps its own copy of the pipeline (it reads a PNG and
+   prints a timing table); the app uses the orchestrator.
 
 ## How to run what exists
 
@@ -118,6 +140,11 @@ glance spike --png shot.png --endpoint http://127.0.0.1:<port>/v1 \
   --model qwen3-vl-4b-instruct-q4km          # record 5 s, answer aloud, timings
 glance cache-check --png shot.png --endpoint ... --model ...
 glance say "Text to speak." ; glance voices  # system voice, installed voices
+glance capture-check                         # live capture: sizes and timings only
+export GLANCE_SIGN_IDENTITY=<SHA-1 from: security find-identity -v -p codesigning>
+cargo xtask bundle                           # signed target/bundle/Glance.app
+open -W --stderr "$(tty)" target/bundle/Glance.app --args app \
+  --endpoint http://127.0.0.1:<port>/v1 --model qwen3-vl-4b-instruct-q4km
 glance mic-check                             # level and timing, no transcript
 glance stt-bench --stt parakeet-tdt-0.6b-v3-int8 clips/*.wav
 glance bench --endpoint ... --model ... --out eval-local/results/x.json
@@ -125,24 +152,24 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 64 tests
+cargo test --workspace --locked              # 80 tests
 cargo audit
 cargo deny check                             # currently fails, see open item 1
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
-## Next step: finish M2
+## Next step: M2 acceptance (needs the maintainer)
 
-Done: live capture of the active display (`crates/capture/src/live.rs`, 3
-tests). It has not run on a real screen yet. Left, in order (details in
-`docs/DESIGN.md` §14):
-1. Orchestrator turn state machine with mock-based tests.
-2. `glance app`: NSApplication loop (no Dock icon), Ctrl+Opt+G / Ctrl+Opt+Shift+G
-   via `global-hotkey`, `tray-icon` status, permission checklist, and Quit.
-3. Screen Recording and microphone permission helpers.
-4. `cargo xtask bundle` for `Glance.app` (`io.github.matty-pw.glance`), signed
-   with `GLANCE_SIGN_IDENTITY`. 5. `glance capture-check`.
-New pins: `global-hotkey` =0.10.0, `tray-icon` =0.26.1, `dispatch2` =0.3.1,
-`objc2-av-foundation` =0.3.2.
-Needs the maintainer: decide open item 1, then press each chord and grant the
-permissions once the bundle exists.
+Built: the orchestrator turn loop (`crates/orchestrator`), `glance app`
+(`crates/app/src/cmd/app/`), permission helpers, `cargo xtask bundle`,
+`glance capture-check`. Live capture has run on a real screen from the
+terminal. To finish M2:
+1. Decide open item 1 (`cargo deny` advisory).
+2. Set `GLANCE_SIGN_IDENTITY`, run `cargo xtask bundle` (click "Always
+   Allow" if the keychain asks), start `glance serve`, launch the bundle with
+   the `open` command above.
+3. Allow Screen Recording when asked, quit from the tray, relaunch.
+4. Hold Ctrl+Opt+G and ask; allow the microphone prompt; ask again. Repeat
+   with Ctrl+Opt+Shift+G. Each turn logs one `turn=… ttfa_ms=…` line.
+5. Rebuild twice (`cargo xtask bundle`), relaunch, and check no new prompts
+   appear. Then M3 (follow-ups, `look` vs `talk`, session expiry).
