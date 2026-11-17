@@ -1,7 +1,8 @@
 //! Screen capture behind the [`ScreenCapture`] trait.
 //!
-//! The ScreenCaptureKit implementation lands in M2. Until then the only source
-//! is [`PngFile`], which reads a PNG supplied on the command line.
+//! Two sources: [`live::LiveScreen`] captures the active display through
+//! ScreenCaptureKit (macOS), and [`PngFile`] reads a PNG supplied on the
+//! command line for the CLI spikes.
 //!
 //! Screenshots are held in opaque in-memory types: no `Serialize`, no
 //! `Display`, and a `Debug` that prints only dimensions and sizes, so pixels
@@ -27,7 +28,19 @@ pub enum CaptureError {
     Decode(#[source] image::ImageError),
     #[error("could not encode the image as PNG: {0}")]
     Encode(#[source] image::ImageError),
+    #[error(
+        "Screen Recording permission is not granted. Allow glance in System Settings > \
+         Privacy & Security > Screen & System Audio Recording, then relaunch it"
+    )]
+    PermissionDenied,
+    #[error("no display to capture")]
+    NoDisplay,
+    #[error("screen capture failed: {0}")]
+    Capture(String),
 }
+
+#[cfg(target_os = "macos")]
+pub mod live;
 
 /// A source of screenshots.
 pub trait ScreenCapture: Send + Sync {
@@ -51,6 +64,16 @@ impl Screenshot {
         let image = image::load_from_memory_with_format(bytes, ImageFormat::Png)
             .map_err(CaptureError::Decode)?;
         Ok(Self { image })
+    }
+
+    /// Wrap tightly packed RGBA pixels (4 bytes per pixel, no row padding).
+    pub fn from_rgba(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, CaptureError> {
+        let image = image::RgbaImage::from_raw(width, height, pixels).ok_or_else(|| {
+            CaptureError::Capture(format!("pixel buffer does not match {width}x{height}"))
+        })?;
+        Ok(Self {
+            image: DynamicImage::ImageRgba8(image),
+        })
     }
 
     pub fn width(&self) -> u32 {
@@ -155,7 +178,7 @@ impl ScreenCapture for PngFile {
 }
 
 /// Largest size with the same aspect ratio whose longer edge is `max` or less.
-fn fit_within(width: u32, height: u32, max: u32) -> (u32, u32) {
+pub fn fit_within(width: u32, height: u32, max: u32) -> (u32, u32) {
     let long = width.max(height);
     if long <= max || long == 0 {
         return (width, height);
@@ -208,6 +231,13 @@ mod tests {
         assert_eq!(format!("{shot:?}"), "Screenshot(64x32)");
         let enc = shot.encode(64).unwrap();
         assert!(format!("{enc:?}").starts_with("EncodedImage(64x32, "));
+    }
+
+    #[test]
+    fn from_rgba_checks_the_buffer_size() {
+        let shot = Screenshot::from_rgba(4, 2, vec![200; 4 * 2 * 4]).unwrap();
+        assert_eq!((shot.width(), shot.height()), (4, 2));
+        assert!(Screenshot::from_rgba(4, 2, vec![0; 10]).is_err());
     }
 
     #[test]

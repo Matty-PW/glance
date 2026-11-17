@@ -1,2 +1,8 @@
 [alias]
 xtask = "run --package xtask --"
+
+[env]
+# glance v1 requires macOS 14.2 (cpal 0.18, ScreenCaptureKit screenshots).
+# Linking for the same minimum also lets the Swift bridges inside
+# screencapturekit link without Swift back-compatibility shims.
+MACOSX_DEPLOYMENT_TARGET = "14.2"

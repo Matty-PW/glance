@@ -57,3 +57,7 @@ ort = "=2.0.0-rc.12"
 objc2 = "=0.6.5"
 objc2-avf-audio = { version = "=0.3.2", default-features = false, features = ["std", "AVSpeechSynthesis"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSRunLoop", "NSDate", "NSObjCRuntime"] }
+# M2: live screen capture (ScreenCaptureKit) and the frontmost-app lookup.
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSResponder", "NSRunningApplication", "NSWorkspace"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGWindow", "CGDirectDisplay"] }
+screencapturekit = { version = "=11.1.2", features = ["macos_14_0"] }
