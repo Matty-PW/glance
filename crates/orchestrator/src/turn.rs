@@ -211,7 +211,12 @@ pub(crate) async fn prepare(
             deep_history,
             Message::user(vec![deep_image.clone()]),
         );
-        let request = shared.request(Tier::Deep, messages, 1);
+        let mut request = shared.request(Tier::Deep, messages, 1);
+        // No assistant turn opened: the prompt then ends right after the
+        // image, which is where the question will continue (see session.rs).
+        request
+            .extra_body
+            .insert("add_generation_prompt".into(), json!(false));
         tokio::spawn(async move {
             let _ = run_to_end(&*deep, request).await;
         });
@@ -345,17 +350,18 @@ async fn run(
     }
     notify.state(TurnState::Thinking);
 
-    let question = |tier: Tier| {
+    // FAST: image and question in one message (measured in M0).
+    let fast_question = {
         let mut parts = Vec::with_capacity(2);
         if let Some(shot) = &prepared.shot {
-            parts.push(shot.for_tier(tier).clone());
+            parts.push(shot.image.clone());
         }
         parts.push(Part::Text(transcript.text.clone()));
         Message::user(parts)
     };
     let mut request = shared.request(
         Tier::Fast,
-        shared.messages(Tier::Fast, history, question(Tier::Fast)),
+        shared.messages(Tier::Fast, history, fast_question),
         shared.config.max_tokens,
     );
     if shared.config.grammar {
@@ -379,9 +385,19 @@ async fn run(
             report.escalation = Some(reason);
             voice.say_marked(filler(reason), Mark::Filler)?;
             let deep = shared.deep.as_ref().expect("checked above");
+            // DEEP: the image as its own message, then the question, so the
+            // prompt continues exactly where the prewarm stopped.
+            let mut deep_history = deep_history;
+            if let Some(shot) = &prepared.shot {
+                deep_history.push(Message::user(vec![shot.for_tier(Tier::Deep).clone()]));
+            }
             let request = shared.request(
                 Tier::Deep,
-                shared.messages(Tier::Deep, deep_history, question(Tier::Deep)),
+                shared.messages(
+                    Tier::Deep,
+                    deep_history,
+                    Message::user_text(transcript.text.clone()),
+                ),
                 shared.config.deep_max_tokens,
             );
             voice.times = Times::default();

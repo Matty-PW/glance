@@ -7,6 +7,14 @@
 //! When `look` brings a newer screenshot, the older image is replaced by a
 //! short text placeholder and the new image goes into the new question's
 //! message. Only one image is ever sent.
+//!
+//! DEEP's layout differs: the image is a user message of its own, followed
+//! by the question as a second user message. Its prewarm is sent as
+//! `[system, …, user:image]` with no assistant turn opened, so it is an exact
+//! prefix of the question's prompt. Hybrid models (Qwen3.8: attention plus
+//! recurrent layers) can only resume cached state from the end of an
+//! earlier prompt; with the image and question in one message the prewarm
+//! was never reused (M4 bake-off: 105 of ~2,820 tokens).
 
 use std::fmt;
 
@@ -108,6 +116,9 @@ impl Session {
         for exchange in &self.exchanges {
             let mut parts = Vec::with_capacity(2);
             match (exchange.image, &self.shot) {
+                (Image::Current, Some(shot)) if !fresh_image && tier == Tier::Deep => {
+                    messages.push(Message::user(vec![shot.for_tier(tier).clone()]));
+                }
                 (Image::Current, Some(shot)) if !fresh_image => {
                     parts.push(shot.for_tier(tier).clone());
                 }
@@ -259,10 +270,13 @@ mod tests {
     }
 
     #[test]
-    fn deep_gets_its_own_larger_copy_of_the_screenshot() {
+    fn deep_gets_its_own_larger_copy_of_the_screenshot_as_its_own_message() {
         let mut s = Session::default();
         s.commit(commit("q1", Some(shot(1))), 12);
-        assert_eq!(layout(&s.history(false, Tier::Deep))[0], "U:img101+q1");
+        assert_eq!(
+            layout(&s.history(false, Tier::Deep)),
+            ["U:img101", "U:q1", "A:answer to q1"]
+        );
         assert_eq!(layout(&s.history(false, Tier::Fast))[0], "U:img1+q1");
     }
 

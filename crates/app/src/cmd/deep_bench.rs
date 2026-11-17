@@ -66,6 +66,12 @@ pub struct Args {
     /// --deep-arg=--checkpoint-min-step --deep-arg=64.
     #[arg(long = "deep-arg", allow_hyphen_values = true)]
     deep_args: Vec<String>,
+    /// Prewarm as [system, user:image] without the assistant turn opened,
+    /// and ask as [system, user:image, user:question], so the prewarm prompt
+    /// is an exact prefix of the question's (hybrid models only restore
+    /// cached state from the end of a previous prompt).
+    #[arg(long)]
+    split_prewarm: bool,
     /// Only the first N hard questions.
     #[arg(long)]
     limit: Option<usize>,
@@ -146,8 +152,8 @@ pub async fn run(args: Args) -> Result<()> {
         questions.truncate(n);
     }
     for effort in &args.efforts {
-        if !["low", "medium", "xhigh"].contains(&effort.as_str()) {
-            bail!("effort `{effort}`: Qwen3.8 accepts low, medium, xhigh");
+        if !["off", "low", "medium", "xhigh"].contains(&effort.as_str()) {
+            bail!("effort `{effort}`: Qwen3.8 accepts low, medium, xhigh (or off: no thinking)");
         }
     }
 
@@ -248,34 +254,41 @@ pub async fn run(args: Args) -> Result<()> {
         });
 
         for effort in &args.efforts {
-            let body = json!({
-                "cache_prompt": true,
-                "chat_template_kwargs": {"reasoning_effort": effort},
-            });
+            let kwargs = if effort == "off" {
+                json!({"enable_thinking": false})
+            } else {
+                json!({"reasoning_effort": effort})
+            };
+            let body = json!({"cache_prompt": true, "chat_template_kwargs": kwargs});
             let system = Message::system(DEEP_SYSTEM_PROMPT);
+            let image_message = Message::user(vec![deep_image.clone()]);
+            let mut warm_body = body.clone();
+            if args.split_prewarm {
+                warm_body["add_generation_prompt"] = json!(false);
+            }
             let t = Instant::now();
             let warm = run_to_end(
                 &deep_client,
                 req(
-                    vec![system.clone(), Message::user(vec![deep_image.clone()])],
+                    vec![system.clone(), image_message.clone()],
                     1,
-                    &body,
+                    &warm_body,
                     false,
                 ),
             )
             .await?;
             let prewarm = t.elapsed();
+            let question = if args.split_prewarm {
+                vec![system, image_message, Message::user_text(ask.clone())]
+            } else {
+                vec![
+                    system,
+                    Message::user(vec![deep_image.clone(), Part::Text(ask.clone())]),
+                ]
+            };
             let mut run = deep_once(
                 &deep_client,
-                req(
-                    vec![
-                        system,
-                        Message::user(vec![deep_image.clone(), Part::Text(ask.clone())]),
-                    ],
-                    args.deep_max_tokens,
-                    &body,
-                    false,
-                ),
+                req(question, args.deep_max_tokens, &body, false),
             )
             .await?;
             run.scene = scene.clone();

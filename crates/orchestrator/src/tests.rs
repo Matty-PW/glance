@@ -87,6 +87,8 @@ struct SeenRequest {
     max_tokens: Option<u32>,
     /// Which system prompt: "plain", "escalation" or "deep".
     system: &'static str,
+    /// `add_generation_prompt`, when the request sets it.
+    generation_prompt: Option<bool>,
     /// Every message after the system prompt, as `U:part+part` or `A:text`.
     /// Images are `img1`, `img2`… in the order the mock first saw them;
     /// the placeholder for a replaced screenshot is `earlier`.
@@ -146,9 +148,14 @@ impl ChatModel for MockChat {
             Some(Part::Text(t)) if t == crate::SPOKEN_SYSTEM_PROMPT => "plain",
             _ => "other",
         };
+        let generation_prompt = request
+            .extra_body
+            .get("add_generation_prompt")
+            .and_then(serde_json::Value::as_bool);
         self.seen.lock().unwrap().push(SeenRequest {
             max_tokens: request.max_tokens,
             system,
+            generation_prompt,
             layout,
         });
         let events = if prewarm {
@@ -464,11 +471,13 @@ async fn a_held_chord_is_answered_aloud_sentence_by_sentence() {
             SeenRequest {
                 max_tokens: Some(1),
                 system: "plain",
+                generation_prompt: None,
                 layout: vec!["U:img1".into()],
             },
             SeenRequest {
                 max_tokens: Some(200),
                 system: "plain",
+                generation_prompt: None,
                 layout: vec!["U:img1+what is this window".into()],
             },
         ]
@@ -864,9 +873,12 @@ async fn an_escalation_speaks_a_filler_then_deeps_answer() {
         layouts(&deep),
         [
             vec!["U:img1".to_owned()],
-            vec!["U:img1+what is the total".to_owned()]
+            vec!["U:img1".to_owned(), "U:what is the total".to_owned()]
         ]
     );
+    // The prewarm leaves the assistant turn unopened, so it is a prefix.
+    assert_eq!(deep[0].generation_prompt, Some(false));
+    assert_eq!(deep[1].generation_prompt, None);
     assert!(deep.iter().all(|r| r.system == "deep"));
     // FAST was offered the escalation option, in prewarm and question alike
     // (the same prompt keeps the cached prefix valid).
@@ -896,7 +908,8 @@ async fn deeps_answer_joins_the_session() {
     assert_eq!(
         last,
         [
-            "U:img1+what is the total".to_owned(),
+            "U:img1".to_owned(),
+            "U:what is the total".to_owned(),
             a("It is seven."),
             "U:and per month".to_owned()
         ]
