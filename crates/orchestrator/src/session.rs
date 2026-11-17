@@ -17,11 +17,29 @@ use tokio::time::Instant;
 pub(crate) const EARLIER_SCREENSHOT: &str =
     "(An earlier screenshot was shown here; a newer one has replaced it.)";
 
-/// A screenshot as sent to the model.
+/// A screenshot as sent to the models: FAST gets a smaller copy than DEEP.
 #[derive(Clone)]
 pub(crate) struct Shot {
     pub(crate) image: Part,
+    /// Present when a DEEP tier is configured.
+    pub(crate) deep_image: Option<Part>,
     pub(crate) taken: Instant,
+}
+
+impl Shot {
+    pub(crate) fn for_tier(&self, tier: Tier) -> &Part {
+        match (tier, &self.deep_image) {
+            (Tier::Deep, Some(deep)) => deep,
+            _ => &self.image,
+        }
+    }
+}
+
+/// Which model a message list is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tier {
+    Fast,
+    Deep,
 }
 
 /// What an answered turn adds to the session.
@@ -85,12 +103,14 @@ impl Session {
     /// The messages that come before the new question (without the system
     /// prompt). `fresh_image`: the new question brings its own screenshot,
     /// so the current one is shown as a placeholder.
-    pub(crate) fn history(&self, fresh_image: bool) -> Vec<Message> {
+    pub(crate) fn history(&self, fresh_image: bool, tier: Tier) -> Vec<Message> {
         let mut messages = Vec::with_capacity(self.exchanges.len() * 2);
         for exchange in &self.exchanges {
             let mut parts = Vec::with_capacity(2);
             match (exchange.image, &self.shot) {
-                (Image::Current, Some(shot)) if !fresh_image => parts.push(shot.image.clone()),
+                (Image::Current, Some(shot)) if !fresh_image => {
+                    parts.push(shot.for_tier(tier).clone());
+                }
                 (Image::Current | Image::Earlier, _) => {
                     parts.push(Part::Text(EARLIER_SCREENSHOT.into()));
                 }
@@ -157,6 +177,7 @@ mod tests {
     fn shot(byte: u8) -> Shot {
         Shot {
             image: Part::Png(Arc::from(vec![byte])),
+            deep_image: Some(Part::Png(Arc::from(vec![byte + 100]))),
             taken: Instant::now(),
         }
     }
@@ -195,7 +216,7 @@ mod tests {
         s.commit(commit("q1", Some(shot(1))), 12);
         s.commit(commit("q2", None), 12);
         assert_eq!(
-            layout(&s.history(false)),
+            layout(&s.history(false, Tier::Fast)),
             ["U:img1+q1", "A:answer to q1", "U:q2", "A:answer to q2"]
         );
     }
@@ -205,11 +226,14 @@ mod tests {
         let mut s = Session::default();
         s.commit(commit("q1", Some(shot(1))), 12);
         // Asking with a fresh image: the current one is not sent again.
-        assert_eq!(layout(&s.history(true)), ["U:earlier+q1", "A:answer to q1"]);
+        assert_eq!(
+            layout(&s.history(true, Tier::Fast)),
+            ["U:earlier+q1", "A:answer to q1"]
+        );
         s.commit(commit("q2", Some(shot(2))), 12);
         s.commit(commit("q3", None), 12);
         assert_eq!(
-            layout(&s.history(false)),
+            layout(&s.history(false, Tier::Fast)),
             [
                 "U:earlier+q1",
                 "A:answer to q1",
@@ -228,10 +252,18 @@ mod tests {
         s.commit(commit("q2", None), 2);
         s.commit(commit("q3", None), 2);
         assert_eq!(
-            layout(&s.history(false)),
+            layout(&s.history(false, Tier::Fast)),
             ["U:img1+q2", "A:answer to q2", "U:q3", "A:answer to q3"]
         );
         assert_eq!(s.info().questions, 2);
+    }
+
+    #[test]
+    fn deep_gets_its_own_larger_copy_of_the_screenshot() {
+        let mut s = Session::default();
+        s.commit(commit("q1", Some(shot(1))), 12);
+        assert_eq!(layout(&s.history(false, Tier::Deep))[0], "U:img101+q1");
+        assert_eq!(layout(&s.history(false, Tier::Fast))[0], "U:img1+q1");
     }
 
     #[test]

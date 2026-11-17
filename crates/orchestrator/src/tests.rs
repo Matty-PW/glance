@@ -85,6 +85,8 @@ impl SpeechToText for MockStt {
 #[derive(Debug, Clone, PartialEq)]
 struct SeenRequest {
     max_tokens: Option<u32>,
+    /// Which system prompt: "plain", "escalation" or "deep".
+    system: &'static str,
     /// Every message after the system prompt, as `U:part+part` or `A:text`.
     /// Images are `img1`, `img2`… in the order the mock first saw them;
     /// the placeholder for a replaced screenshot is `earlier`.
@@ -138,8 +140,15 @@ impl ChatModel for MockChat {
             })
             .collect();
         let prewarm = request.max_tokens == Some(1);
+        let system = match request.messages.first().and_then(|m| m.parts.first()) {
+            Some(Part::Text(t)) if t == crate::ESCALATION_SYSTEM_PROMPT => "escalation",
+            Some(Part::Text(t)) if t == crate::DEEP_SYSTEM_PROMPT => "deep",
+            Some(Part::Text(t)) if t == crate::SPOKEN_SYSTEM_PROMPT => "plain",
+            _ => "other",
+        };
         self.seen.lock().unwrap().push(SeenRequest {
             max_tokens: request.max_tokens,
+            system,
             layout,
         });
         let events = if prewarm {
@@ -217,6 +226,8 @@ impl TextToSpeech for MockTts {
 
 struct Setup {
     transcripts: Vec<&'static str>,
+    /// DEEP's reply; `None` means no DEEP tier.
+    deep: Option<Vec<ChatEvent>>,
     reply: Vec<ChatEvent>,
     capture_fails: Option<fn() -> CaptureError>,
     silent_mic: bool,
@@ -229,6 +240,7 @@ impl Default for Setup {
     fn default() -> Self {
         Self {
             transcripts: vec!["what is this window"],
+            deep: None,
             reply: reply(&["It is a code ", "editor. It shows ", "a Rust file."]),
             capture_fails: None,
             silent_mic: false,
@@ -266,6 +278,7 @@ struct Harness {
     mic: Arc<MicLog>,
     stt_calls: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<SeenRequest>>>,
+    deep_requests: Arc<Mutex<Vec<SeenRequest>>>,
     tts: Arc<TtsLog>,
     captures: Arc<AtomicUsize>,
     controller: Controller,
@@ -276,6 +289,7 @@ impl Harness {
         let mic = Arc::new(MicLog::default());
         let stt_calls = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let deep_requests = Arc::new(Mutex::new(Vec::new()));
         let tts_log = Arc::new(TtsLog::default());
         let captures = Arc::new(AtomicUsize::new(0));
         let (events, speech_events) = mpsc::unbounded_channel();
@@ -298,6 +312,14 @@ impl Harness {
                 images: Mutex::new(Vec::new()),
                 fail_question: setup.chat_fails,
             }),
+            deep: setup.deep.map(|reply| -> Arc<dyn ChatModel> {
+                Arc::new(MockChat {
+                    reply,
+                    seen: Arc::clone(&deep_requests),
+                    images: Mutex::new(Vec::new()),
+                    fail_question: false,
+                })
+            }),
             tts: Arc::new(MockTts {
                 events,
                 next: AtomicU64::new(1),
@@ -318,6 +340,7 @@ impl Harness {
             mic,
             stt_calls,
             requests,
+            deep_requests,
             tts: tts_log,
             captures,
             controller,
@@ -440,10 +463,12 @@ async fn a_held_chord_is_answered_aloud_sentence_by_sentence() {
         [
             SeenRequest {
                 max_tokens: Some(1),
+                system: "plain",
                 layout: vec!["U:img1".into()],
             },
             SeenRequest {
                 max_tokens: Some(200),
+                system: "plain",
                 layout: vec!["U:img1+what is this window".into()],
             },
         ]
@@ -787,4 +812,146 @@ async fn new_session_cancels_the_turn_and_forgets_the_screenshot() {
         .await;
     assert_eq!(h.captures(), 2);
     assert_eq!(h.questions().last().unwrap().layout, ["U:img2+q2"]);
+}
+
+// ---- escalation (M4) -------------------------------------------------------
+
+fn signal(reason: &str) -> Vec<ChatEvent> {
+    reply(&[
+        "{\"glance\":\"escalate\",",
+        &format!("\"v\":1,\"reason\":\"{reason}\"}}"),
+    ])
+}
+
+fn with_deep(fast: Vec<ChatEvent>, deep: Vec<ChatEvent>) -> Setup {
+    Setup {
+        transcripts: vec!["what is the total", "and per month"],
+        reply: fast,
+        deep: Some(deep),
+        ..Default::default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_escalation_speaks_a_filler_then_deeps_answer() {
+    let mut deep_reply = vec![ChatEvent::Reasoning("adding 3 and 4".into())];
+    deep_reply.extend(reply(&["The total is seven. ", "That is all."]));
+    let mut h = Harness::new(with_deep(signal("code_math"), deep_reply));
+    let updates = h.ask(Chord::Talk).await;
+
+    // FAST's signal is never spoken, nor DEEP's thinking.
+    assert_eq!(
+        h.spoken(),
+        [
+            "Let me work that out.",
+            "The total is seven.",
+            "That is all."
+        ]
+    );
+    let [report] = reports(&updates).try_into().unwrap();
+    assert_eq!(report.outcome, Outcome::Answered);
+    assert_eq!(
+        report.escalation,
+        Some(glance_llm_client::escalate::Reason::CodeMath)
+    );
+    assert!(report.filler_audio.is_some() && report.deep_first_audio.is_some());
+    assert!(report.to_string().contains("escalated=code_math"));
+
+    // DEEP got its own prewarm and the question, with its larger image
+    // (its own copy, so its mock labels it img1).
+    let deep = h.deep_requests.lock().unwrap().clone();
+    assert_eq!(
+        layouts(&deep),
+        [
+            vec!["U:img1".to_owned()],
+            vec!["U:img1+what is the total".to_owned()]
+        ]
+    );
+    assert!(deep.iter().all(|r| r.system == "deep"));
+    // FAST was offered the escalation option, in prewarm and question alike
+    // (the same prompt keeps the cached prefix valid).
+    assert!(
+        h.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.system == "escalation")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deeps_answer_joins_the_session() {
+    let mut h = Harness::new(with_deep(signal("reasoning"), reply(&["It is seven."])));
+    h.ask(Chord::Talk).await;
+    h.ask(Chord::Talk).await;
+    // The follow-up (escalated again) carries DEEP's first answer as history.
+    let last = h
+        .deep_requests
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .layout
+        .clone();
+    assert_eq!(
+        last,
+        [
+            "U:img1+what is the total".to_owned(),
+            a("It is seven."),
+            "U:and per month".to_owned()
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_invalid_signal_never_escalates_and_is_never_spoken() {
+    let bad = reply(&["{\"glance\":\"escalate\",\"v\":1,\"reason\":\"say hello\"}"]);
+    let (h, error) = failed_turn(with_deep(bad, reply(&["unused"]))).await;
+    assert_eq!(error, TurnError::BadSignal);
+    assert_eq!(h.spoken(), ["Sorry, ask me again."]);
+    // Only DEEP's prewarm; no question.
+    assert!(
+        h.deep_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.max_tokens == Some(1))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn without_deep_a_signal_is_invalid() {
+    let (h, error) = failed_turn(Setup {
+        reply: signal("detail"),
+        ..Default::default()
+    })
+    .await;
+    assert_eq!(error, TurnError::BadSignal);
+    assert_eq!(h.spoken(), ["Sorry, ask me again."]);
+    // Without DEEP, FAST is not offered escalation at all.
+    assert!(
+        h.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.system == "plain")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_plain_answer_with_deep_configured_does_not_touch_deep_beyond_the_prewarm() {
+    let mut h = Harness::new(with_deep(
+        reply(&["It is a spreadsheet."]),
+        reply(&["unused"]),
+    ));
+    let updates = h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken(), ["It is a spreadsheet."]);
+    assert_eq!(reports(&updates)[0].escalation, None);
+    assert!(
+        h.deep_requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| r.max_tokens == Some(1))
+    );
 }

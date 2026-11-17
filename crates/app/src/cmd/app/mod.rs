@@ -162,6 +162,7 @@ async fn start(
         mic: Box::new(Microphone::new(60)),
         stt: Box::new(stt),
         chat: Arc::new(client),
+        deep: None,
         tts: voice,
         speech_events,
     };

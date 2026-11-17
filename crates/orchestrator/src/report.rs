@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use glance_capture::CaptureError;
 use glance_llm_client::ChatError;
+use glance_llm_client::escalate::Reason;
 
 use crate::Chord;
 
@@ -42,6 +43,8 @@ pub enum TurnError {
     Chat(String),
     #[error("the model sent an empty reply")]
     EmptyReply,
+    #[error("the fast model's reply started like an escalation but was not a valid one")]
+    BadSignal,
     #[error("speech output failed: {0}")]
     Speech(String),
     #[error("an internal worker stopped")]
@@ -60,6 +63,7 @@ impl TurnError {
             TurnError::NoSpeech => "no_speech",
             TurnError::Chat(_) => "chat",
             TurnError::EmptyReply => "empty_reply",
+            TurnError::BadSignal => "bad_signal",
             TurnError::Speech(_) => "speech",
             TurnError::WorkerGone => "worker_gone",
         }
@@ -80,6 +84,7 @@ impl TurnError {
             TurnError::NoSpeech => "Sorry, I didn't catch that.",
             TurnError::Chat(_) => "Sorry, I couldn't reach the model.",
             TurnError::EmptyReply => "Sorry, I don't have an answer for that.",
+            TurnError::BadSignal => "Sorry, ask me again.",
             TurnError::Speech(_) | TurnError::WorkerGone => return None,
         })
     }
@@ -139,6 +144,13 @@ pub struct TurnReport {
     /// Key-up to the first sound: the metric that matters.
     pub ttfa: Option<Duration>,
     pub total: Option<Duration>,
+    /// Set when FAST handed the question to DEEP.
+    pub escalation: Option<Reason>,
+    /// Key-up to the filler line's first sound.
+    pub filler_audio: Option<Duration>,
+    /// Key-up to DEEP's first token and first sound.
+    pub deep_ttft: Option<Duration>,
+    pub deep_first_audio: Option<Duration>,
     pub prompt_n: Option<u64>,
     pub cache_n: Option<u64>,
     pub tokens_per_second: Option<f64>,
@@ -167,6 +179,10 @@ impl TurnReport {
             first_chunk: None,
             ttfa: None,
             total: None,
+            escalation: None,
+            filler_audio: None,
+            deep_ttft: None,
+            deep_first_audio: None,
             prompt_n: None,
             cache_n: None,
             tokens_per_second: None,
@@ -192,6 +208,9 @@ impl fmt::Display for TurnReport {
         if let Some(n) = self.history {
             write!(f, " history={n}")?;
         }
+        if let Some(reason) = self.escalation {
+            write!(f, " escalated={}", reason.as_str())?;
+        }
         let times = [
             ("ttfa_ms", self.ttfa),
             ("held_ms", self.held),
@@ -204,6 +223,9 @@ impl fmt::Display for TurnReport {
             ("prewarm_wait_ms", self.prewarm_wait),
             ("ttft_ms", self.ttft),
             ("first_chunk_ms", self.first_chunk),
+            ("filler_audio_ms", self.filler_audio),
+            ("deep_ttft_ms", self.deep_ttft),
+            ("deep_audio_ms", self.deep_first_audio),
             ("total_ms", self.total),
         ];
         for (name, value) in times {
