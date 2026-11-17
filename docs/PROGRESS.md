@@ -11,7 +11,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | Step 2: skeleton, hooks, CI, `deny.toml` | Done. CI has not been observed running on GitHub yet |
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
 | M1: TTS with sentence streaming | Done on the macOS system voice. **Kokoro parked** (see below) |
-| M2: hotkey, live capture, `.app`, permissions | In progress |
+| M2: hotkey, live capture, `.app`, permissions | **Parked mid-way.** Live capture done; the rest is listed below |
 | M3–M5 | Not started |
 
 ## Decision: Kokoro parked (2026-11-17)
@@ -20,8 +20,10 @@ M2–M4 use the macOS system voice so the full loop works end to end first.
 Kokoro is revisited after M4, or sooner if system-voice quality turns out to
 be a real problem. Reason: Kokoro would add roughly 250–450 ms before the
 first sentence sounds. Measured synthesis per sentence (fp32, 10 threads):
-230–804 ms, median 456 ms. The system voice starts 36–60 ms after a sentence
-is queued.
+230–804 ms, median 456 ms; the system voice starts 36–60 ms after queueing.
+Spike (`spikes/kokoro-g2p`): `misaki-rs` without espeak covers Kokoro's
+vocabulary once the in-house fallback handles unknown words; transcribed back,
+Kokoro scored 9.9% word errors vs 9.5% for the system voice.
 
 Left to finish Kokoro:
 1. `AudioOutput` trait and cpal implementation in `crates/audio`: 24 kHz to
@@ -61,17 +63,9 @@ LFM2.5-VL-3B reused nothing for the first question.
 | Qwen3-VL-8B | 1024 | 30/30 | 2.5 s | 44 tok/s | 19/30 | 6/6 | 0 | 6.3 GB |
 | LFM2.5-VL-3B | 1280 | 29/30 | 3.1 s | 107 tok/s | 23/30 | 1/6 | 12 | 1.6 GB |
 
-**End to end (M0).** Key-up to first complete sentence: 404 ms. Mic start 65 ms.
-
 **Time to first audio, system voice (M1).** Key-up to first sound over six
-`glance spike` runs: 354–546 ms (target 1.3 s), including uncached images.
-All runs were at volume 0; nobody has listened yet.
-
-**Kokoro spike (M1, `spikes/kokoro-g2p`).** `misaki-rs` 0.9.0 builds without
-espeak (G2P ~2.7 ms per sentence). All its phonemes over 60 test sentences
-are in Kokoro's vocabulary; 15 words had no pronunciation until the spike's
-fallback was added. fp32 runs 9.1x real time at 10 threads (q8f16 only 2.8x).
-Transcribed back with Parakeet: 9.9% word errors vs 9.5% for the system voice.
+`glance spike` runs: 354–546 ms (target 1.3 s), including uncached images
+(M0: 404 ms to first complete sentence). All runs at volume 0.
 
 ## Decisions made, and why
 
@@ -91,23 +85,21 @@ Transcribed back with Parakeet: 9.9% word errors vs 9.5% for the system voice.
   thread pumping that loop and runs the pipeline on tokio worker threads.
 - **No GPL code**: `misaki-rs` with `default-features = false`, plus an
   in-house fallback for unknown words instead of espeak-ng.
+- **Builds target macOS 14.2**, and `crates/capture/build.rs` lets the
+  ScreenCaptureKit Swift bridge link with only the Command Line Tools.
 
 ## Open items and known problems
 
-1. **`cargo deny check` fails on advisories since 2026-11-17.**
-   RUSTSEC-2026-0542 marks `humantime` as unmaintained (not a
-   vulnerability); it comes in via `transcribe-rs` → `env_logger` 0.10, and
-   no fixed version exists. Options: add an `ignore` entry with a reason to
-   `deny.toml`, or replace or patch the dependency. Needs a decision; CI fails
-   until then. `cargo audit` reports it as a warning only.
+1. **`cargo deny check` fails on advisories since 2026-11-17** (CI too):
+   RUSTSEC-2026-0542, `humantime` unmaintained (not a vulnerability), via
+   `transcribe-rs` → `env_logger` 0.10, no fixed version. Decide: `ignore`
+   entry with a reason in `deny.toml`, or replace/patch the dependency.
 2. Nobody has listened to either voice or run `glance spike` with a real voice.
-3. Only default-quality system voices are installed on the reference machine;
-   a Premium voice should sound clearly better.
+3. Only default-quality system voices are installed; a Premium one is better.
 4. The system-voice code has no automated test; `cargo test` runs no main
    run loop. The chunker and text cleanup are covered (15 tests).
 5. Both Qwen models hit the ceiling of the synthetic set, so it cannot show
    where the 8B reads better than the 4B.
-6. `docs/DESIGN.md` §6 and §13 lack the M1 numbers and the Kokoro decision.
 
 ## How to run what exists
 
@@ -124,10 +116,8 @@ glance serve qwen3-vl-4b-instruct-q4km       # prints http://127.0.0.1:<port>/v1
 # in another terminal:
 glance spike --png shot.png --endpoint http://127.0.0.1:<port>/v1 \
   --model qwen3-vl-4b-instruct-q4km          # record 5 s, answer aloud, timings
-glance spike ... --wav clip.wav --volume 0   # scripted, silent run
 glance cache-check --png shot.png --endpoint ... --model ...
-glance say "Text to speak."                  # system voice only
-glance voices                                # installed English voices
+glance say "Text to speak." ; glance voices  # system voice, installed voices
 glance mic-check                             # level and timing, no transcript
 glance stt-bench --stt parakeet-tdt-0.6b-v3-int8 clips/*.wav
 glance bench --endpoint ... --model ... --out eval-local/results/x.json
@@ -135,15 +125,24 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 60 tests
+cargo test --workspace --locked              # 64 tests
 cargo audit
 cargo deny check                             # currently fails, see open item 1
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
-## Next step
+## Next step: finish M2
 
-M2: global hotkeys (Ctrl+Opt+G talk, Ctrl+Opt+Shift+G look), live capture,
-tray status, permission checklist, and a signed `Glance.app` (bundle ID
-`io.github.matty-pw.glance`) whose grants survive rebuilds. Open item 1 still
-needs a decision before any milestone can be called done.
+Done: live capture of the active display (`crates/capture/src/live.rs`, 3
+tests). It has not run on a real screen yet. Left, in order (details in
+`docs/DESIGN.md` §14):
+1. Orchestrator turn state machine with mock-based tests.
+2. `glance app`: NSApplication loop (no Dock icon), Ctrl+Opt+G / Ctrl+Opt+Shift+G
+   via `global-hotkey`, `tray-icon` status, permission checklist, and Quit.
+3. Screen Recording and microphone permission helpers.
+4. `cargo xtask bundle` for `Glance.app` (`io.github.matty-pw.glance`), signed
+   with `GLANCE_SIGN_IDENTITY`. 5. `glance capture-check`.
+New pins: `global-hotkey` =0.10.0, `tray-icon` =0.26.1, `dispatch2` =0.3.1,
+`objc2-av-foundation` =0.3.2.
+Needs the maintainer: decide open item 1, then press each chord and grant the
+permissions once the bundle exists.
