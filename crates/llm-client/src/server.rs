@@ -51,6 +51,9 @@ pub struct ServerSpec {
     pub show_output: bool,
     /// Longest wait for the model to load.
     pub start_timeout: Duration,
+    /// More llama-server flags, e.g. `--spec-type draft-mtp`. Fixed text
+    /// from code or config, never from the screen or a model.
+    pub extra_args: Vec<String>,
 }
 
 pub struct ManagedServer {
@@ -85,6 +88,7 @@ impl ManagedServer {
             .args(["--alias", &spec.alias])
             .args(["--ctx-size", &spec.ctx.to_string()])
             .args(["--parallel", "1", "--offline", "--no-webui"])
+            .args(&spec.extra_args)
             .env("LLAMA_API_KEY", &key)
             .stdin(Stdio::null())
             .stdout(if spec.show_output {
@@ -120,6 +124,10 @@ impl ManagedServer {
 
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.child.id()
     }
 
     /// Whether the process is still running.

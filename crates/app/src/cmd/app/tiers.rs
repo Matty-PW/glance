@@ -94,6 +94,7 @@ pub async fn start(source: Source) -> Result<Tier> {
                     show_output: false,
                     // Large DEEP models take a while to load.
                     start_timeout: Duration::from_secs(300),
+                    extra_args: Vec::new(),
                 })
             })
             .await??;

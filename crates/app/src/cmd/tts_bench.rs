@@ -256,7 +256,7 @@ async fn report_ttfa(
 }
 
 /// Time from `speak()` to the sentence's first sound, then stop it.
-async fn first_audio(
+pub async fn first_audio(
     tts: &dyn TextToSpeech,
     events: &mut UnboundedReceiver<SpeechEvent>,
     text: &str,

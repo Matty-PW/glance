@@ -143,6 +143,9 @@ pub struct Timings {
     pub predicted_n: Option<u64>,
     pub predicted_ms: Option<f64>,
     pub predicted_per_second: Option<f64>,
+    /// Speculative decoding (e.g. MTP): tokens drafted and accepted.
+    pub draft_n: Option<u64>,
+    pub draft_n_accepted: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

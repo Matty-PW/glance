@@ -51,6 +51,7 @@ pub async fn run(args: Args) -> Result<()> {
         ctx: args.ctx,
         show_output: args.show_output,
         start_timeout: Duration::from_secs(180),
+        extra_args: Vec::new(),
     };
     let started = Instant::now();
     let server = ManagedServer::start(&spec).await?;
