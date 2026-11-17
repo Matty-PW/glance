@@ -251,9 +251,18 @@ blocked on Kokoro. It remains afterwards as the fallback when the Kokoro model i
 not installed. The delegate callbacks need a running main-thread run loop, which
 the app has from M2; the M1 CLI runs one for the duration of the reply.
 
-### 6.3 Kokoro-82M v1.0 on `ort` (parked after the M1 spike)
+### 6.3 Kokoro-82M v1.0 on `ort` (resumed 2026-11-17)
 
-**Status: parked.** The time-boxed spike passed all three checks (results and
+**Phonemizer decision (2026-11-17): `misaki-rs`, `espeak` feature off.** Kokoro
+was trained on Misaki's phonemes, and misaki-rs reproduces Misaki exactly,
+including the part-of-speech tagger that picks heteronym readings ("read",
+"record"). Caveat: its embedded dictionaries have no licence statement of their
+own and were partly corrected "using eSpeak" (GPL-3.0); details and quotes in
+`THIRD_PARTY.md`. The phonemizer is behind a `Phonemizer` trait, and a
+CMUdict-based G2P is the replacement if binaries are ever distributed and that
+data licence is a problem. The CMUdict path is not built.
+
+**Earlier status (M1): parked.** The time-boxed spike passed all three checks (results and
 the remaining work are in `docs/PROGRESS.md`; the spike code is in
 `spikes/kokoro-g2p`), but Kokoro would add roughly 250–450 ms before the first
 sentence sounds: fp32 synthesis at 10 threads measured 230–804 ms per sentence
