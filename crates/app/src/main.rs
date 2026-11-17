@@ -33,6 +33,8 @@ enum Command {
     SttBench(cmd::stt_bench::Args),
     /// Run the synthetic evaluation set against one model endpoint.
     Bench(cmd::bench::Args),
+    /// Capture the active display and print sizes and timings (no image is kept).
+    CaptureCheck(cmd::capture_check::Args),
     /// Record briefly and print microphone level and timing (no transcription).
     MicCheck(cmd::mic_check::Args),
     /// Speak some text with the system voice, sentence by sentence.
@@ -52,6 +54,7 @@ fn main() -> anyhow::Result<()> {
         Command::Serve(args) => cmd::serve::run(args),
         Command::SttBench(args) => cmd::stt_bench::run(args),
         Command::MicCheck(args) => cmd::mic_check::run(args),
+        Command::CaptureCheck(args) => cmd::capture_check::run(args),
         Command::Say(args) => cmd::say::run(args),
         Command::Voices => cmd::say::voices(),
         Command::Spike(args) => {

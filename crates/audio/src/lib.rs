@@ -8,6 +8,8 @@
 //! See `docs/DESIGN.md` §2–4.
 
 mod mic;
+#[cfg(target_os = "macos")]
+pub mod permission;
 mod resample;
 
 use std::fmt;

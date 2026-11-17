@@ -6,7 +6,9 @@
 //! The pixels stay in memory.
 
 use objc2_app_kit::NSWorkspace;
-use objc2_core_graphics::{CGMainDisplayID, CGPreflightScreenCaptureAccess};
+use objc2_core_graphics::{
+    CGMainDisplayID, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
+};
 use screencapturekit::prelude::{
     CGRect, SCContentFilter, SCShareableContent, SCStreamConfiguration,
 };
@@ -31,6 +33,13 @@ impl LiveScreen {
 /// Whether this process may capture the screen. Never shows a prompt.
 pub fn screen_recording_granted() -> bool {
     CGPreflightScreenCaptureAccess()
+}
+
+/// Ask for Screen Recording permission. macOS shows its prompt only the
+/// first time; after that this just reports the current state. A grant
+/// usually takes effect only after the app is relaunched.
+pub fn request_screen_recording() -> bool {
+    CGRequestScreenCaptureAccess()
 }
 
 impl ScreenCapture for LiveScreen {
