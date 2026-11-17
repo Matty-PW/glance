@@ -67,8 +67,9 @@ M4 Pro, 48GB.
   run (signed bundle, chord presses, grants surviving rebuilds) needs me.
 - TTS is the macOS system voice through M4. Kokoro is parked; don't resume it
   unless asked (what's left is in `docs/PROGRESS.md`).
-- `cargo deny check` fails on advisory RUSTSEC-2026-0542 (`humantime`, via
-  `transcribe-rs`). Waiting on my decision; don't add an ignore entry yourself.
+- `deny.toml` ignores RUSTSEC-2026-0542 (`humantime`, via `transcribe-rs`),
+  with my OK; remove it when transcribe-rs drops env_logger 0.10. Any other
+  advisory ignore still needs my OK first.
 - Builds target macOS 14.2 (`.cargo/config.toml`). Only the Command Line Tools
   are installed, not full Xcode; `crates/capture/build.rs` covers the Swift
   link path for that.

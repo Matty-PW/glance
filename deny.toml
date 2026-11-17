@@ -9,7 +9,15 @@ all-features = true
 [advisories]
 # Vulnerability, unmaintained and unsound advisories are errors by default.
 # Any exception goes here with an id and a reason.
-ignore = []
+ignore = [
+  # humantime is flagged unmaintained (informational; no vulnerability, no fix).
+  # It comes only from transcribe-rs 0.3.12 -> env_logger 0.10, which
+  # transcribe-rs uses only in its examples and tests. glance never starts a
+  # logger, no input of ours reaches it, and it is not linked into the binary.
+  # Remove when transcribe-rs drops env_logger 0.10 or glance drops transcribe-rs.
+  # Accepted by the maintainer on 2026-11-17.
+  { id = "RUSTSEC-2026-0542", reason = "unmaintained only; reached via transcribe-rs's unused env_logger 0.10 dependency, not linked, no input path" },
+]
 
 [licenses]
 # Allowlist: anything not named here fails, which is how GPL/AGPL/LGPL stay out

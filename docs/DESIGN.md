@@ -627,7 +627,7 @@ end-to-end run is `glance spike` (see README).
 | A chord claimed by a macOS system shortcut may register without error yet never fire | M2 |
 | Permission grants persist across rebuilds with a stable signing identity | M2 |
 | ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`**; live capture ran on a real screen (46–49 ms at 2048 px). The exclusion itself is visible only once the M5 overlay exists |
-| `cargo deny` advisory RUSTSEC-2026-0542 (`humantime` unmaintained, via `transcribe-rs`) | maintainer decision: ignore with reason, or replace the dependency |
+| `cargo deny` advisory RUSTSEC-2026-0542 (`humantime` unmaintained, via `transcribe-rs`) | **Settled 2026-11-17: documented ignore in `deny.toml`** (unmaintained only, not linked, no input path); removed when transcribe-rs drops env_logger 0.10 |
 | Vision support of models served through Ollama/LM Studio endpoints | M4 |
 | egui overlay stays non-activating without a shim | M5 |
 

@@ -108,10 +108,13 @@ key-down, alongside the user's speech, so it is off the TTFA path.
 
 ## Open items and known problems
 
-1. **`cargo deny check` fails on advisories since 2026-11-17** (CI too):
-   RUSTSEC-2026-0542, `humantime` unmaintained (not a vulnerability), via
-   `transcribe-rs` → `env_logger` 0.10, no fixed version. Decide: `ignore`
-   entry with a reason in `deny.toml`, or replace/patch the dependency.
+1. **RUSTSEC-2026-0542 is ignored in `deny.toml`** (maintainer's decision,
+   2026-11-17). `humantime` is flagged unmaintained only (no vulnerability,
+   no fix); it comes via `transcribe-rs` 0.3.12 → `env_logger` 0.10, which
+   transcribe-rs uses only in examples and tests. glance never starts a
+   logger, and neither crate's code is in the release binary (`nm`). Remove
+   the ignore once transcribe-rs drops env_logger 0.10 (env_logger 0.11 uses
+   `jiff` instead) or glance drops transcribe-rs.
 2. Nobody has listened to either voice or run `glance spike` with a real voice.
 3. Only default-quality system voices are installed; a Premium one is better.
 4. The system-voice, hotkey and tray code have no automated tests (they need
@@ -154,7 +157,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked              # 80 tests
 cargo audit
-cargo deny check                             # currently fails, see open item 1
+cargo deny check                             # passes; one documented ignore
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
@@ -164,12 +167,11 @@ Built: the orchestrator turn loop (`crates/orchestrator`), `glance app`
 (`crates/app/src/cmd/app/`), permission helpers, `cargo xtask bundle`,
 `glance capture-check`. Live capture has run on a real screen from the
 terminal. To finish M2:
-1. Decide open item 1 (`cargo deny` advisory).
-2. Set `GLANCE_SIGN_IDENTITY`, run `cargo xtask bundle` (click "Always
+1. Set `GLANCE_SIGN_IDENTITY`, run `cargo xtask bundle` (click "Always
    Allow" if the keychain asks), start `glance serve`, launch the bundle with
    the `open` command above.
-3. Allow Screen Recording when asked, quit from the tray, relaunch.
-4. Hold Ctrl+Opt+G and ask; allow the microphone prompt; ask again. Repeat
+2. Allow Screen Recording when asked, quit from the tray, relaunch.
+3. Hold Ctrl+Opt+G and ask; allow the microphone prompt; ask again. Repeat
    with Ctrl+Opt+Shift+G. Each turn logs one `turn=… ttfa_ms=…` line.
-5. Rebuild twice (`cargo xtask bundle`), relaunch, and check no new prompts
+4. Rebuild twice (`cargo xtask bundle`), relaunch, and check no new prompts
    appear. Then M3 (follow-ups, `look` vs `talk`, session expiry).
