@@ -75,8 +75,6 @@ sentence is queued. All runs were at volume 0; nobody has listened yet.
   thread pumping that loop and runs the pipeline on tokio worker threads.
 - **No GPL code**: `misaki-rs` with `default-features = false`, plus an
   in-house fallback for unknown words instead of espeak-ng.
-- **Commit per crate or logical unit**, hooks always on, never push
-  (`CLAUDE.md`).
 
 ## Open items and known problems
 
@@ -125,8 +123,7 @@ glance stt-bench --stt parakeet-tdt-0.6b-v3-int8 clips/*.wav
 glance bench --endpoint ... --model ... --out eval-local/results/x.json
 ```
 
-Rendering the evaluation screens and running the Kokoro spike: see `README.md`
-and `spikes/README.md`.
+Eval screens and the Kokoro spike: see `README.md` and `spikes/README.md`.
 
 Checks (run before calling a milestone done):
 
