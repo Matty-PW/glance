@@ -50,4 +50,8 @@ pub trait TextToSpeech: Send + Sync {
 
     /// Stop speaking immediately and drop everything queued.
     fn stop(&self);
+
+    /// A reply is coming soon (the user pressed the hotkey): get ready, for
+    /// example by opening the output device. Optional.
+    fn warm_up(&self) {}
 }

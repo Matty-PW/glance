@@ -1,15 +1,14 @@
-//! `glance say` and `glance voices`: exercise text-to-speech on its own.
+//! `glance say` and `glance voices`: exercise text-to-speech on its own, so
+//! voices can be auditioned from the terminal with the same text.
 
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use glance_tts::system_voice::{
-    SystemVoice, SystemVoiceConfig, installed_voices, run_main_loop_until,
-};
-use glance_tts::{ChunkerConfig, SentenceChunker, TextToSpeech};
+use glance_tts::system_voice::{installed_voices, run_main_loop_until};
+use glance_tts::{ChunkerConfig, SentenceChunker};
 
-use super::{ms, track_speech};
+use super::speech::{self, SpeechArgs};
+use super::{KOKORO_VOICES, find_model, manifest, ms, store, track_speech};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -17,34 +16,16 @@ pub struct Args {
     #[arg(required = true)]
     text: Vec<String>,
     #[command(flatten)]
-    voice: VoiceArgs,
+    speech: SpeechArgs,
     /// Cut speech off after this many milliseconds (to test stopping).
     #[arg(long)]
     stop_after_ms: Option<u64>,
 }
 
-/// Voice options shared by every command that speaks.
-#[derive(clap::Args, Clone)]
-pub struct VoiceArgs {
-    /// Voice identifier from `glance voices`, or a language code such as en-GB.
-    #[arg(long)]
-    pub voice: Option<String>,
-    /// Speaking rate, 0.0 (slow) to 1.0 (fast). Default: the system's (0.5).
-    #[arg(long)]
-    pub rate: Option<f32>,
-    /// Volume, 0.0 (silent) to 1.0.
-    #[arg(long, default_value_t = 1.0)]
-    pub volume: f32,
-}
-
-impl VoiceArgs {
-    pub fn config(&self) -> SystemVoiceConfig {
-        SystemVoiceConfig {
-            voice: self.voice.clone(),
-            rate: self.rate,
-            volume: self.volume,
-        }
-    }
+#[derive(clap::Subcommand)]
+pub enum VoicesAction {
+    /// List Kokoro voices and the English system voices.
+    List,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -56,22 +37,26 @@ pub fn run(args: Args) -> Result<()> {
         bail!("nothing speakable in that text");
     }
 
-    let (voice, events) = SystemVoice::new(args.voice.config());
-    let voice = Arc::new(voice);
-    let progress = track_speech(events);
+    let settings = args.speech.settings()?;
+    let speech = speech::start(&settings);
+    println!("engine             {}", speech.description);
+    let voice = speech.tts;
+    let progress = track_speech(speech.events);
 
     let started = Instant::now();
     for sentence in &sentences {
         voice.speak(sentence)?;
     }
     if let Some(after) = args.stop_after_ms {
-        let voice = Arc::clone(&voice);
+        let voice = std::sync::Arc::clone(&voice);
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(after));
             voice.stop();
         });
     }
 
+    // The system voice reports on the main run loop; Kokoro does not need
+    // it, but turning it does no harm.
     let total = sentences.len() as u64;
     let deadline = started + Duration::from_secs(120);
     run_main_loop_until(|| progress.borrow().ended >= total || Instant::now() > deadline);
@@ -97,16 +82,56 @@ pub fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-pub fn voices() -> Result<()> {
+pub fn voices(_action: Option<VoicesAction>) -> Result<()> {
+    let manifest = manifest()?;
+    let model = find_model(&manifest, KOKORO_VOICES)?;
+    let store = store()?;
+    let mut installed = 0;
+    println!("Kokoro voices ({KOKORO_VOICES}); use with --voice <id>");
+    println!("  {:<14} {:<9} {:<7} status", "id", "accent", "gender");
+    for file in &model.files {
+        let Some(id) = file
+            .path
+            .strip_prefix("voices/")
+            .and_then(|p| p.strip_suffix(".bin"))
+        else {
+            continue;
+        };
+        let accent = if id.starts_with('b') {
+            "British"
+        } else {
+            "American"
+        };
+        let gender = if id.as_bytes().get(1) == Some(&b'm') {
+            "male"
+        } else {
+            "female"
+        };
+        // Presence only; files are hashed when a voice is loaded.
+        let present = store.file_path(model, file).is_file();
+        installed += usize::from(present);
+        let status = if present {
+            "installed"
+        } else {
+            "not downloaded"
+        };
+        println!("  {id:<14} {accent:<9} {gender:<7} {status}");
+    }
+    if installed < model.files.len() {
+        println!("  run `glance models pull {KOKORO_VOICES}` to download them");
+    }
+    println!("  Blend two: --voice af_heart:0.6,bf_emma:0.4");
+
     let mut voices = installed_voices();
     voices.sort_by(|a, b| (&a.language, &a.name).cmp(&(&b.language, &b.name)));
+    println!("\nSystem voices (English); use with --engine system --voice <identifier>");
     println!(
-        "{:<8} {:<9} {:<22} identifier",
+        "  {:<8} {:<9} {:<22} identifier",
         "language", "quality", "name"
     );
     for v in voices.iter().filter(|v| v.language.starts_with("en")) {
         println!(
-            "{:<8} {:<9} {:<22} {}",
+            "  {:<8} {:<9} {:<22} {}",
             v.language, v.quality, v.name, v.identifier
         );
     }
@@ -114,6 +139,6 @@ pub fn voices() -> Result<()> {
         .iter()
         .filter(|v| !v.language.starts_with("en"))
         .count();
-    println!("({others} voices in other languages not shown)");
+    println!("  ({others} voices in other languages not shown)");
     Ok(())
 }

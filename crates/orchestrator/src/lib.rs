@@ -316,6 +316,8 @@ impl Orchestrator {
         self.next_turn += 1;
         let pressed_at = Instant::now();
         let mic_started = self.shared.mic.start();
+        // A reply follows soon: let the speech engine open its device now.
+        self.shared.tts.warm_up();
         let capture = chord == Chord::Look || !self.session.has_screenshot();
         let history = self.session.history(capture);
         let prepare = turn::AbortOnDrop(tokio::spawn(turn::prepare(

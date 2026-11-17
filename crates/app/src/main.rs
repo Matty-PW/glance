@@ -2,6 +2,7 @@
 //! and checks used to measure each stage; see `docs/DESIGN.md` §14.
 
 mod cmd;
+mod config;
 
 use clap::{Parser, Subcommand};
 
@@ -42,10 +43,13 @@ enum Command {
     /// Compare Kokoro precisions and the system voice: synthesis speed and
     /// time to first audio.
     TtsBench(cmd::tts_bench::Args),
-    /// Speak some text with the system voice, sentence by sentence.
+    /// Speak text sentence by sentence (Kokoro or the system voice), to audition voices.
     Say(cmd::say::Args),
-    /// List the English system voices installed on this Mac.
-    Voices,
+    /// List the Kokoro voices and the English system voices.
+    Voices {
+        #[command(subcommand)]
+        action: Option<cmd::say::VoicesAction>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -63,7 +67,7 @@ fn main() -> anyhow::Result<()> {
         Command::MicCheck(args) => cmd::mic_check::run(args),
         Command::CaptureCheck(args) => cmd::capture_check::run(args),
         Command::Say(args) => cmd::say::run(args),
-        Command::Voices => cmd::say::voices(),
+        Command::Voices { action } => cmd::say::voices(action),
         Command::Spike(args) => {
             // The spike speaks, and macOS delivers speech events on the main
             // thread's run loop. So the pipeline runs on the runtime's worker

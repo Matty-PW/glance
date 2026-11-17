@@ -157,12 +157,6 @@ impl KokoroVoice {
             receiver,
         ))
     }
-
-    /// Open the output device now (at key-down), so the first sentence does
-    /// not pay for it.
-    pub fn warm_up(&self) {
-        let _ = self.commands.send(Command::WarmUp);
-    }
 }
 
 impl TextToSpeech for KokoroVoice {
@@ -183,6 +177,12 @@ impl TextToSpeech for KokoroVoice {
         if let Some(speaker) = self.shared.speaker().as_ref() {
             speaker.stop();
         }
+    }
+
+    /// Open the output device now (at key-down), so the first sentence does
+    /// not pay for it.
+    fn warm_up(&self) {
+        let _ = self.commands.send(Command::WarmUp);
     }
 }
 

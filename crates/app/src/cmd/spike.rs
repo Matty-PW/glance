@@ -15,10 +15,9 @@ use glance_llm_client::{
 use glance_stt::{Parakeet, SpeechToText};
 use serde_json::json;
 
-use glance_tts::system_voice::SystemVoice;
-use glance_tts::{ChunkerConfig, SentenceChunker, TextToSpeech};
+use glance_tts::{ChunkerConfig, SentenceChunker};
 
-use super::say::VoiceArgs;
+use super::speech::{self, SpeechArgs};
 use super::{SPOKEN_SYSTEM_PROMPT, find_model, manifest, ms, store, track_speech};
 
 #[derive(clap::Args)]
@@ -53,7 +52,7 @@ pub struct Args {
     #[arg(long)]
     no_speak: bool,
     #[command(flatten)]
-    voice: VoiceArgs,
+    speech: SpeechArgs,
 }
 
 pub async fn run(args: Args) -> Result<()> {
@@ -77,10 +76,14 @@ pub async fn run(args: Args) -> Result<()> {
     let client = OpenAiClient::new(Endpoint::loopback(&args.endpoint, &args.model)?)?;
 
     // The speech engine is started up front so its start-up is not part of a turn.
-    let speech = (!args.no_speak).then(|| {
-        let (voice, events) = SystemVoice::new(args.voice.config());
-        (voice, track_speech(events))
-    });
+    let settings = args.speech.settings()?;
+    let speech = if args.no_speak {
+        None
+    } else {
+        let started = speech::start(&settings);
+        eprintln!("speech: {}", started.description);
+        Some((started.tts, track_speech(started.events)))
+    };
 
     // --- "key down": capture, then prewarm while the user talks ---------------
     let started = Instant::now();

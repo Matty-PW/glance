@@ -6,6 +6,7 @@ pub mod mic_check;
 pub mod models;
 pub mod say;
 pub mod serve;
+pub mod speech;
 pub mod spike;
 pub mod stt_bench;
 pub mod tts_bench;

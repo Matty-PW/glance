@@ -24,13 +24,13 @@ use glance_orchestrator::{
     Controller, Orchestrator, Outcome, Parts, TurnConfig, TurnReport, TurnState, Update,
 };
 use glance_stt::Parakeet;
-use glance_tts::system_voice::SystemVoice;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use super::say::VoiceArgs;
+use super::speech::{self, SpeechArgs};
 use super::{find_model, manifest, store};
+use crate::config::SpeechConfig;
 use tray::View;
 
 #[derive(clap::Args)]
@@ -56,7 +56,7 @@ pub struct Args {
     #[arg(long)]
     no_prewarm: bool,
     #[command(flatten)]
-    voice: VoiceArgs,
+    speech: SpeechArgs,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -74,6 +74,9 @@ pub fn run(args: Args) -> Result<()> {
         })
         .unwrap_or_default();
     let client = OpenAiClient::new(endpoint)?;
+    // Read the config file now, so a mistake in it stops the launch with a
+    // message instead of surfacing later.
+    let settings = args.speech.settings()?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -99,7 +102,7 @@ pub fn run(args: Args) -> Result<()> {
                 hotkeys::TALK_LABEL,
                 hotkeys::LOOK_LABEL
             );
-            runtime.spawn(start(args, client, key_events));
+            runtime.spawn(start(args, settings, client, key_events));
             Some(hotkeys)
         }
         Err(message) => {
@@ -125,10 +128,11 @@ pub fn run(args: Args) -> Result<()> {
 /// Load the speech model, build the pipeline, then run turns until exit.
 async fn start(
     args: Args,
+    settings: SpeechConfig,
     client: OpenAiClient,
     key_events: UnboundedReceiver<glance_orchestrator::HotkeyEvent>,
 ) {
-    show(View::status("Loading the speech model…"));
+    show(View::status("Loading the speech models…"));
     let stt_id = args.stt.clone();
     let loaded = tokio::task::spawn_blocking(move || -> Result<Parakeet> {
         let manifest = manifest()?;
@@ -145,13 +149,20 @@ async fn start(
         Err(e) => return fail(format!("speech model: {e}")),
     };
 
-    let (voice, speech_events) = SystemVoice::new(args.voice.config());
+    let settings = settings.clone();
+    let started = tokio::task::spawn_blocking(move || speech::start(&settings)).await;
+    let started = match started {
+        Ok(started) => started,
+        Err(e) => return fail(format!("speech engine: {e}")),
+    };
+    eprintln!("glance: speech: {}", started.description);
+    let (voice, speech_events) = (started.tts, started.events);
     let parts = Parts {
         capture: Arc::new(LiveScreen::new(args.capture_edge.max(args.max_edge))),
         mic: Box::new(Microphone::new(60)),
         stt: Box::new(stt),
         chat: Arc::new(client),
-        tts: Arc::new(voice),
+        tts: voice,
         speech_events,
     };
     let config = TurnConfig {
