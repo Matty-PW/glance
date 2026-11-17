@@ -38,9 +38,13 @@ binary. Model licences are recorded per model in `models.toml`.
 
 ## language-tokenizer 0.1.0 (pulled in by misaki-rs, unused)
 
-Reviewed 2026-11-17 for a proposed `deny.toml` licence exception. The
-exception was **not added**, because of the unsound `unsafe` below, so
-`cargo deny check` fails on licences until the maintainer decides.
+Reviewed 2026-11-17 for a `deny.toml` licence exception. **Decision
+(maintainer, 2026-11-17): exception added** for exactly
+`language-tokenizer@0.1.0` (WTFPL), with the problems below accepted because
+the crate is never called and not linked. Any other version needs a fresh
+review. Exit plan: ask misaki-rs to drop the unused dependency, then remove
+the exception. `cargo deny` still prints a `no-license-field` warning for it
+(it has only a licence file); that is expected.
 
 - Why it is here: misaki-rs 0.9.0 lists it as a normal dependency (with
   feature `snowball`), but nothing in misaki-rs's source uses it. Neither it
@@ -64,7 +68,9 @@ exception was **not added**, because of the unsound `unsafe` below, so
   `tokenize(text, Algorithm::default(), _)` transmutes `-1` into an enum with
   no such value: undefined behaviour from safe code. glance never reaches it
   (misaki-rs never calls the crate), but it is compiled.
-- Its new dependency `waken_snowball` 0.1.0 (BSD-3-Clause, no `unsafe`, no
-  build script) is published by crates.io user `mc373906408` ("waken") while
-  its manifest names "Snowball Contributors" and the official
-  snowballstem/snowball repository: an unofficial repackaging.
+- Its dependency `waken_snowball` 0.1.0: BSD-3-Clause, `build = false`, no
+  dependencies, no proc macros, no `unsafe` (manifest reviewed by the
+  maintainer too: clean). Misleading metadata: it is published by crates.io
+  user `mc373906408` ("waken") while its manifest names "Snowball
+  Contributors" as author and the official snowballstem/snowball repository,
+  so it is an unofficial repackaging of Snowball's stemmers.

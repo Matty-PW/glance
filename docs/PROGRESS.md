@@ -31,9 +31,10 @@ via `warm_up` and closed after 30 s idle); config file; `glance voices`,
 `glance say --voice/--speed`, `glance tts-bench`; all 28 English voices pinned.
 
 Left:
-1. **Licence decision: `language-tokenizer` 0.1.0 (WTFPL)**, a dependency of
-   misaki-rs that misaki-rs never uses. `cargo deny check` fails on licences
-   until it is allowed (scoped exception) or removed.
+1. Done: `language-tokenizer@0.1.0` (WTFPL, unused by misaki-rs) allowed by
+   an exact-version exception in `deny.toml`; review in `THIRD_PARTY.md`.
+   Remove it once misaki-rs drops the dependency (upstream issue drafted,
+   not filed).
 2. Listening test of the samples (`eval-local/kokoro-bench/`) and of voices.
 3. A spoken run through `glance app` with Kokoro, recording the turn's
    `ttfa_ms`.
@@ -220,7 +221,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked              # 126 tests
 cargo audit
-cargo deny check                             # fails on licences: Kokoro item 1
+cargo deny check                             # passes; one ignore, one exception
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 

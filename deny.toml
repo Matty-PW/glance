@@ -37,6 +37,18 @@ exceptions = [
     # Mozilla's root certificate bundle (a permissive data licence). Pulled in
     # only by ureq inside ort-sys's build script.
     { allow = ["CDLA-Permissive-2.0"], crate = "webpki-root-certs" },
+    # WTFPL (permissive). language-tokenizer 0.1.0 is a dependency misaki-rs
+    # 0.9.0 declares but never calls: none of its code is linked into glance.
+    # Its manifest has no `license` field, only `license-file` (WTFPL v2).
+    # Known problem, accepted by the maintainer on 2026-11-17: two unsound
+    # `transmute`s from its `#[repr(i8)] Algorithm` (with None = -1) into
+    # waken_snowball's `repr(Rust)` enum, reachable from its safe `tokenize`
+    # with `Algorithm::default()`. Its dependency waken_snowball 0.1.0
+    # (BSD-3-Clause, build = false, no dependencies, no proc macros) names the
+    # official Snowball project as author and repository but is published by
+    # an unrelated account. Pinned to this exact version so an update gets a
+    # fresh review. Remove once misaki-rs drops the dependency (THIRD_PARTY.md).
+    { allow = ["WTFPL"], crate = "language-tokenizer@0.1.0" },
 ]
 
 [licenses.private]
