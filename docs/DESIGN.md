@@ -671,7 +671,12 @@ end-to-end run is `glance spike` (see README).
   chords register at startup, a registration failure produces a visible error
   naming the chord, a physical press and release of each chord is observed end
   to end, and grants survive two rebuilds (the last two need the maintainer).
-- **M3**: follow-ups on the same screenshot, `look` hotkey, session expiry.
+- **M3** (code done, spoken run pending): follow-ups on the same screenshot,
+  `look` hotkey, session expiry. Session in `crates/orchestrator/src/session.rs`:
+  answered turns only; `look` replaces the older image with a text
+  placeholder; history capped at 12 exchanges; ends after 10 idle minutes or
+  from the tray's "New session" (shown with question count and screenshot
+  age). Tested with mocks.
 - **M4**: escalation, managed llama-server pair, DEEP bake-off report.
 - **M5**: settings, overlay, Keychain, model manifest management.
 

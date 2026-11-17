@@ -61,10 +61,12 @@ M4 Pro, 48GB.
 
 ## Current state (read before starting work)
 - `docs/PROGRESS.md` is the source of truth for status, measurements, open
-  items and the next step. `docs/DESIGN.md` §14 lists what is left in M2.
+  items and the next step. `docs/DESIGN.md` §14 lists the milestones.
 - M0 and M1 are done. M2's code is done (orchestrator turn loop, `glance
   app`, permissions, `cargo xtask bundle`, `capture-check`); its acceptance
   run (signed bundle, chord presses, grants surviving rebuilds) needs me.
+- M3's code is done too (sessions: follow-ups, `look` vs `talk`, idle
+  expiry, "New session"); it needs a spoken run through the app. M4 is next.
 - TTS is the macOS system voice through M4. Kokoro is parked; don't resume it
   unless asked (what's left is in `docs/PROGRESS.md`).
 - `deny.toml` ignores RUSTSEC-2026-0542 (`humantime`, via `transcribe-rs`),

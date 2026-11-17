@@ -12,7 +12,8 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
 | M1: TTS with sentence streaming | Done on the macOS system voice. **Kokoro parked** (see below) |
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
-| M3–M5 | Not started |
+| M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
+| M4–M5 | Not started |
 
 ## Decision: Kokoro parked (2026-11-17)
 
@@ -101,6 +102,15 @@ key-down, alongside the user's speech, so it is off the TTFA path.
   and glance says to check the permission.
 - **Tray** shows state as a short marker next to the icon (● listening,
   … working, ▸ speaking, ! fatal) because there is no overlay until M5.
+- **M3 sessions** (`crates/orchestrator/src/session.rs`): only answered
+  turns join the session, so a cancelled or failed `look` keeps the old
+  screenshot. `talk` follow-ups skip capture and prewarm (the prefix is
+  cached from the last turn). On `look`, the older image becomes a short
+  text placeholder and the new image goes in the new question, so one image
+  is ever sent and the prewarm is history + new image. History is capped at
+  12 exchanges (well inside `glance serve`'s 8192-token context); when the
+  oldest is dropped the screenshot moves to the next question. "New
+  session" in the tray and 10 idle minutes end it.
 - **Signing** uses `--timestamp=none`: a secure timestamp contacts Apple and
   is only needed for notarization.
 - **Builds target macOS 14.2**, and `crates/capture/build.rs` lets the
@@ -123,7 +133,12 @@ key-down, alongside the user's speech, so it is off the TTFA path.
    where the 8B reads better than the 4B.
 6. Not yet observed: a physical press of either chord, a turn through the
    bundled app, and grants surviving rebuilds (all need the maintainer).
-7. `glance spike` keeps its own copy of the pipeline (it reads a PNG and
+   Observed: a registration failure names both chords (a second instance
+   started while the bundle was running).
+7. Not yet measured: TTFA of a `talk` follow-up (no capture, no prewarm)
+   and of a `look` with history, where the prewarm re-evaluates the
+   history text before the new image.
+8. `glance spike` keeps its own copy of the pipeline (it reads a PNG and
    prints a timing table); the app uses the orchestrator.
 
 ## How to run what exists
@@ -155,23 +170,28 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 80 tests
+cargo test --workspace --locked              # 90 tests
 cargo audit
 cargo deny check                             # passes; one documented ignore
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
-## Next step: M2 acceptance (needs the maintainer)
+## Next step: M2 and M3 acceptance (needs the maintainer), then M4
 
-Built: the orchestrator turn loop (`crates/orchestrator`), `glance app`
-(`crates/app/src/cmd/app/`), permission helpers, `cargo xtask bundle`,
-`glance capture-check`. Live capture has run on a real screen from the
-terminal. To finish M2:
-1. Set `GLANCE_SIGN_IDENTITY`, run `cargo xtask bundle` (click "Always
-   Allow" if the keychain asks), start `glance serve`, launch the bundle with
-   the `open` command above.
+Built: the orchestrator turn loop and sessions (`crates/orchestrator`),
+`glance app` (`crates/app/src/cmd/app/`), permission helpers, `cargo xtask
+bundle`, `glance capture-check`. Live capture has run on a real screen from
+the terminal. To finish M2 and M3:
+1. Quit any running Glance (a rebuild replaces the bundle under it). Set
+   `GLANCE_SIGN_IDENTITY`, run `cargo xtask bundle` (click "Always Allow" if
+   the keychain asks), start `glance serve`, launch with the `open` command
+   above.
 2. Allow Screen Recording when asked, quit from the tray, relaunch.
-3. Hold Ctrl+Opt+G and ask; allow the microphone prompt; ask again. Repeat
-   with Ctrl+Opt+Shift+G. Each turn logs one `turn=… ttfa_ms=…` line.
-4. Rebuild twice (`cargo xtask bundle`), relaunch, and check no new prompts
-   appear. Then M3 (follow-ups, `look` vs `talk`, session expiry).
+3. Hold Ctrl+Opt+G and ask; allow the microphone prompt; ask again. Each
+   turn logs one `turn=… ttfa_ms=…` line.
+4. M3: ask a follow-up with Ctrl+Opt+G (log shows `image=reused`), change
+   the screen and ask with Ctrl+Opt+Shift+G (`image=fresh`), then a
+   follow-up about the new screen. Check the tray's session line and "New
+   session".
+5. Rebuild twice (`cargo xtask bundle`), relaunch, and check no new prompts
+   appear. Then M4 (escalation, managed llama-server pair, DEEP bake-off).
