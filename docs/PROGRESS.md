@@ -95,6 +95,29 @@ Budget is ~5 s from key-up. **No effort level is acceptable.** Two causes:
 
 Answers are in `eval-local/results/deep-qwen3.8-27b.json` for spot-checking.
 
+**After the fixes** (`deep-bench --split-prewarm`, MTP on, 2048 px, medium
+effort unless noted; median / max over the 6 questions, prewarm finished):
+
+| Setting | Thinking | Key-up → first word |
+|---|---|---|
+| Before (prewarm not reused, uncapped) | 20.4 / 57.7 s | 50.4 / 92.3 s |
+| Prewarm reused: request → first thinking token | – | 29.3 s → 0.53 s (cache 105 → 2,774 tokens) |
+| + thinking capped at 256 tokens | 13.4 / 14.9 s | 16.0 / 17.9 s |
+| + thinking capped at 128 tokens | 7.2 / 7.7 s | **10.0 / 10.2 s** |
+| Thinking off | – | 2.6 / 3.4 s |
+
+Quality check on the two calculation questions (chart, sheet), against
+uncapped xhigh: the 128 cap agreed on both; thinking off got one sheet figure
+wrong and answered in markdown bullets.
+
+DEEP's image prewarm, which a fresh-screenshot escalation waits for: 2048 px
+28–30 s, 1536 px 15.6–16.5 s, 1024 px 6.8–7.7 s. At 1536 and 1024 px the
+sheet answer was wrong (1024 px spoke a wrong first sentence, then corrected
+itself), so DEEP stays at 2048 px. Consequence: a question escalated right
+after a new `look` waits ~25 s more; follow-ups on the same screenshot do not.
+
+Defaults now: medium effort, 128-token thinking cap, MTP on, 2048 px.
+
 ## What is measured
 
 **Image-prefix cache (M0).** On a real screenshot with Qwen3-VL-4B, the

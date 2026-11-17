@@ -25,7 +25,7 @@
 //! fast_ctx = 8192
 //! deep_ctx = 16384
 //! deep_effort = "medium"        # Qwen3.8 reasoning effort: low, medium, xhigh, or off
-//! deep_thinking_budget = 256    # cap on DEEP's thinking tokens (managed DEEP only)
+//! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only)
 //! deep_mtp = true               # speculative decoding with the model's MTP layers
 //! ```
 
@@ -100,7 +100,9 @@ impl Default for ModelsConfig {
             fast_ctx: 8192,
             deep_ctx: 16384,
             deep_effort: "medium".into(),
-            deep_thinking_budget: Some(256),
+            // M4 bake-off: 128 kept the answers checked correct at ~10 s to
+            // the first word; 256 took ~16 s; off was fastest but wrong once.
+            deep_thinking_budget: Some(128),
             deep_mtp: true,
         }
     }
