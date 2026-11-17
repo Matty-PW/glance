@@ -1,0 +1,19 @@
+[package]
+name = "misaki-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+misaki-rs = { version = "=0.9.0", default-features = false }
+serde_json = "1"
+ort = "=2.0.0-rc.12"
+hound = "3.5.1"
+
+[[bin]]
+name = "dbg"
+path = "src/bin_dbg.rs"
+
+[[bin]]
+name = "misaki-spike"
+path = "src/main.rs"
