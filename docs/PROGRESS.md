@@ -1,8 +1,7 @@
 # glance — progress
 
-Snapshot as of 2026-11-17. The design lives in `docs/DESIGN.md`; this file says
-where the work stands. All numbers were measured on the Apple Silicon
-reference machine named in `CLAUDE.md`, with synthetic inputs unless noted.
+Snapshot as of 2026-11-17; the design is in `docs/DESIGN.md`. Numbers are from
+the Apple Silicon reference machine, with synthetic inputs unless noted.
 
 ## Milestone status
 
@@ -62,13 +61,11 @@ LFM2.5-VL-3B reused nothing for the first question.
 | Qwen3-VL-8B | 1024 | 30/30 | 2.5 s | 44 tok/s | 19/30 | 6/6 | 0 | 6.3 GB |
 | LFM2.5-VL-3B | 1280 | 29/30 | 3.1 s | 107 tok/s | 23/30 | 1/6 | 12 | 1.6 GB |
 
-**End to end (M0).** Key-up to first complete sentence: 404 ms. Mic delivers
-first samples 65 ms after start; 48→16 kHz resample 1–2 ms.
+**End to end (M0).** Key-up to first complete sentence: 404 ms. Mic start 65 ms.
 
-**Time to first audio, system voice (M1).** Key-up to first sound, six runs
-of `glance spike` with synthetic clips: 354–546 ms (target 1.3 s), including
-runs where the image was not yet cached. The voice starts 36–60 ms after a
-sentence is queued. All runs were at volume 0; nobody has listened yet.
+**Time to first audio, system voice (M1).** Key-up to first sound over six
+`glance spike` runs: 354–546 ms (target 1.3 s), including uncached images.
+All runs were at volume 0; nobody has listened yet.
 
 **Kokoro spike (M1, `spikes/kokoro-g2p`).** `misaki-rs` 0.9.0 builds without
 espeak (G2P ~2.7 ms per sentence). All its phonemes over 60 test sentences
@@ -111,7 +108,7 @@ Transcribed back with Parakeet: 9.9% word errors vs 9.5% for the system voice.
    run loop. The chunker and text cleanup are covered (15 tests).
 5. Both Qwen models hit the ceiling of the synthetic set, so it cannot show
    where the 8B reads better than the 4B.
-6. `docs/DESIGN.md` §6 and §13 do not yet include the M1 numbers above.
+6. `docs/DESIGN.md` §6 and §13 lack the M1 numbers and the Kokoro decision.
 
 ## How to run what exists
 
@@ -143,7 +140,6 @@ cargo test --workspace --locked              # 60 tests
 cargo audit
 cargo deny check                             # currently fails, see open item 1
 ```
-
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
 ## Next step
