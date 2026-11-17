@@ -100,8 +100,7 @@ Transcribed back with Parakeet: 9.9% word errors vs 9.5% for the system voice.
    no fixed version exists. Options: add an `ignore` entry with a reason to
    `deny.toml`, or replace or patch the dependency. Needs a decision; CI fails
    until then. `cargo audit` reports it as a warning only.
-2. Nobody has listened to either voice, or run `glance spike` with a real
-   voice in a real room.
+2. Nobody has listened to either voice or run `glance spike` with a real voice.
 3. Only default-quality system voices are installed on the reference machine;
    a Premium voice should sound clearly better.
 4. The system-voice code has no automated test; `cargo test` runs no main
