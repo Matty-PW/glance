@@ -10,6 +10,7 @@
 //!   only be touched there.
 
 mod hotkeys;
+mod tiers;
 mod tray;
 
 use std::sync::{Arc, OnceLock};
@@ -19,7 +20,6 @@ use anyhow::{Context, Result};
 use dispatch2::DispatchQueue;
 use glance_audio::Microphone;
 use glance_capture::live::{LiveScreen, request_screen_recording, screen_recording_granted};
-use glance_llm_client::{Endpoint, OpenAiClient};
 use glance_orchestrator::{
     Controller, Orchestrator, Outcome, Parts, TurnConfig, TurnReport, TurnState, Update,
 };
@@ -30,17 +30,23 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::speech::{self, SpeechArgs};
 use super::{find_model, manifest, store};
-use crate::config::SpeechConfig;
+use crate::config::{Config, SpeechConfig};
+use tiers::Source;
 use tray::View;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// OpenAI-compatible API root, e.g. http://127.0.0.1:8080/v1 (loopback only).
+    /// Use your own FAST server instead of the one glance runs: an
+    /// OpenAI-compatible API root such as http://127.0.0.1:8080/v1
+    /// (loopback only). Overrides `[models]` in the config file.
     #[arg(long)]
-    endpoint: String,
-    /// Model name to request from the endpoint.
+    endpoint: Option<String>,
+    /// Model name to request from --endpoint.
     #[arg(long, default_value = "default")]
     model: String,
+    /// Run without a DEEP tier even if the config file names one.
+    #[arg(long)]
+    no_deep: bool,
     /// Speech model id from models.toml.
     #[arg(long, default_value = "parakeet-tdt-0.6b-v3-int8")]
     stt: String,
@@ -61,22 +67,42 @@ pub struct Args {
 
 pub fn run(args: Args) -> Result<()> {
     let mtm = MainThreadMarker::new().context("glance app must run on the main thread")?;
-    // Checked before anything starts, so a bad endpoint fails at once.
-    let endpoint = Endpoint::loopback(&args.endpoint, &args.model)?;
-    let host = endpoint
-        .chat_url()
-        .host_str()
-        .map(|h| {
-            format!(
-                "{h}:{}",
-                endpoint.chat_url().port_or_known_default().unwrap_or(0)
-            )
-        })
-        .unwrap_or_default();
-    let client = OpenAiClient::new(endpoint)?;
-    // Read the config file now, so a mistake in it stops the launch with a
-    // message instead of surfacing later.
+    // Read the config file now, so a mistake in it (or a bad endpoint)
+    // stops the launch with a message instead of surfacing later.
     let settings = args.speech.settings()?;
+    let models = Config::load()?.models;
+    let fast = match &args.endpoint {
+        Some(endpoint) => Source::External {
+            endpoint: endpoint.clone(),
+            model: args.model.clone(),
+        },
+        None => match &models.fast_endpoint {
+            Some(endpoint) => Source::External {
+                endpoint: endpoint.clone(),
+                model: models.fast_model.clone(),
+            },
+            None => Source::Managed {
+                id: models.fast.clone(),
+                ctx: models.fast_ctx,
+            },
+        },
+    };
+    let deep = match (&models.deep_endpoint, &models.deep) {
+        _ if args.no_deep => None,
+        (Some(endpoint), _) => Some(Source::External {
+            endpoint: endpoint.clone(),
+            model: models.deep_model.clone(),
+        }),
+        (None, Some(id)) => Some(Source::Managed {
+            id: id.clone(),
+            ctx: models.deep_ctx,
+        }),
+        (None, None) => None,
+    };
+    fast.check().context("FAST model")?;
+    if let Some(deep) = &deep {
+        deep.check().context("DEEP model")?;
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -88,7 +114,11 @@ pub fn run(args: Args) -> Result<()> {
     // run the pipeline, so glance never sits there without a working chord.
     let (keys, key_events) = unbounded_channel();
     let registered = hotkeys::register(keys);
-    let model_line = format!("Model: {} at {host}", args.model);
+    let model_line = format!(
+        "FAST: {} · DEEP: {}",
+        fast.label(),
+        deep.as_ref().map_or("none".to_owned(), Source::label)
+    );
 
     // The tray may only be created once the run loop is running; the main
     // queue runs this block as soon as it is.
@@ -102,7 +132,7 @@ pub fn run(args: Args) -> Result<()> {
                 hotkeys::TALK_LABEL,
                 hotkeys::LOOK_LABEL
             );
-            runtime.spawn(start(args, settings, client, key_events));
+            runtime.spawn(start(args, settings, fast, deep, key_events));
             Some(hotkeys)
         }
         Err(message) => {
@@ -129,10 +159,14 @@ pub fn run(args: Args) -> Result<()> {
 async fn start(
     args: Args,
     settings: SpeechConfig,
-    client: OpenAiClient,
+    fast: Source,
+    deep: Option<Source>,
     key_events: UnboundedReceiver<glance_orchestrator::HotkeyEvent>,
 ) {
-    show(View::status("Loading the speech models…"));
+    show(View::status("Starting the models…"));
+    // The language models load while speech loads.
+    let fast = tokio::spawn(tiers::start(fast));
+    let deep = deep.map(|d| tokio::spawn(tiers::start(d)));
     let stt_id = args.stt.clone();
     let loaded = tokio::task::spawn_blocking(move || -> Result<Parakeet> {
         let manifest = manifest()?;
@@ -157,12 +191,40 @@ async fn start(
     };
     eprintln!("glance: speech: {}", started.description);
     let (voice, speech_events) = (started.tts, started.events);
+    let fast = match fast.await {
+        Ok(Ok(tier)) => tier,
+        Ok(Err(e)) => return fail(format!("FAST model: {e:#}")),
+        Err(e) => return fail(format!("FAST model: {e}")),
+    };
+    let deep = match deep {
+        None => None,
+        Some(task) => match task.await {
+            Ok(Ok(tier)) => Some(tier),
+            // FAST alone still works: its prompt then omits escalation.
+            Ok(Err(e)) => {
+                eprintln!("glance: DEEP model unavailable, continuing without it: {e:#}");
+                None
+            }
+            Err(e) => {
+                eprintln!("glance: DEEP model unavailable, continuing without it: {e}");
+                None
+            }
+        },
+    };
+    let deep_max_edge = TurnConfig::default().deep_max_edge;
+    let capture_edge = if deep.is_some() {
+        args.capture_edge.max(deep_max_edge)
+    } else {
+        args.capture_edge
+    };
     let parts = Parts {
-        capture: Arc::new(LiveScreen::new(args.capture_edge.max(args.max_edge))),
+        capture: Arc::new(LiveScreen::new(capture_edge.max(args.max_edge))),
         mic: Box::new(Microphone::new(60)),
         stt: Box::new(stt),
-        chat: Arc::new(client),
-        deep: None,
+        chat: Arc::new(fast.client),
+        deep: deep
+            .as_ref()
+            .map(|d| -> Arc<dyn glance_llm_client::ChatModel> { Arc::new(d.client.clone()) }),
         tts: voice,
         speech_events,
     };
@@ -170,6 +232,7 @@ async fn start(
         max_edge: args.max_edge,
         max_tokens: args.max_tokens,
         prewarm: !args.no_prewarm,
+        grammar: fast.grammar,
         ..Default::default()
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
@@ -178,6 +241,14 @@ async fn start(
     show(View::state(TurnState::Idle));
     eprintln!("glance: ready");
     orchestrator.run(key_events).await;
+}
+
+/// Quit: stop the servers glance started, then the app.
+fn quit() {
+    tiers::shutdown();
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).terminate(None);
+    }
 }
 
 /// Set once the pipeline is running; the tray's "New session" uses it.

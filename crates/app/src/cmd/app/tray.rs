@@ -12,8 +12,6 @@ use dispatch2::DispatchQueue;
 use glance_audio::permission::{MicPermission, microphone_permission};
 use glance_capture::live::screen_recording_granted;
 use glance_orchestrator::{SessionInfo, TurnState};
-use objc2::MainThreadMarker;
-use objc2_app_kit::NSApplication;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
@@ -257,11 +255,7 @@ fn on_menu(id: &str) {
         ID_SCREEN => open_settings(SCREEN_SETTINGS),
         ID_MIC => open_settings(MIC_SETTINGS),
         ID_NEW_SESSION => super::new_session(),
-        ID_QUIT => DispatchQueue::main().exec_async(|| {
-            if let Some(mtm) = MainThreadMarker::new() {
-                NSApplication::sharedApplication(mtm).terminate(None);
-            }
-        }),
+        ID_QUIT => DispatchQueue::main().exec_async(super::quit),
         _ => {}
     }
 }

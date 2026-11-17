@@ -13,6 +13,17 @@
 //! threads = 10             # ONNX Runtime threads for Kokoro
 //! system_voice = "en-GB"   # for engine = "system": identifier or language
 //! system_rate = 0.5        # 0.0 (slow) to 1.0 (fast)
+//!
+//! [models]
+//! fast = "qwen3-vl-4b-instruct-q4km"  # a vision model from models.toml; glance runs it
+//! deep = "…"                          # optional: FAST can hand hard questions to it
+//! # Or use servers you run yourself (loopback only); these override fast/deep:
+//! # fast_endpoint = "http://127.0.0.1:8080/v1"
+//! # fast_model = "default"
+//! # deep_endpoint = "http://127.0.0.1:8081/v1"
+//! # deep_model = "default"
+//! fast_ctx = 8192
+//! deep_ctx = 16384
 //! ```
 
 use std::path::PathBuf;
@@ -25,6 +36,36 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields, default)]
 pub struct Config {
     pub speech: SpeechConfig,
+    pub models: ModelsConfig,
+}
+
+/// Where FAST and DEEP run (`docs/DESIGN.md` §7.1).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct ModelsConfig {
+    pub fast: String,
+    pub fast_endpoint: Option<String>,
+    pub fast_model: String,
+    pub deep: Option<String>,
+    pub deep_endpoint: Option<String>,
+    pub deep_model: String,
+    pub fast_ctx: u32,
+    pub deep_ctx: u32,
+}
+
+impl Default for ModelsConfig {
+    fn default() -> Self {
+        Self {
+            fast: "qwen3-vl-4b-instruct-q4km".into(),
+            fast_endpoint: None,
+            fast_model: "default".into(),
+            deep: None,
+            deep_endpoint: None,
+            deep_model: "default".into(),
+            fast_ctx: 8192,
+            deep_ctx: 16384,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, clap::ValueEnum)]
@@ -130,6 +171,14 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let config: Self = toml::from_str(text)?;
         config.speech.validate()?;
+        for (name, ctx) in [
+            ("fast_ctx", config.models.fast_ctx),
+            ("deep_ctx", config.models.deep_ctx),
+        ] {
+            if !(2048..=131_072).contains(&ctx) {
+                bail!("models.{name} must be between 2048 and 131072, got {ctx}");
+            }
+        }
         Ok(config)
     }
 }
@@ -158,6 +207,20 @@ mod tests {
         let config =
             Config::parse("[speech]\nengine = \"system\"\nsystem_voice = \"en-GB\"\n").unwrap();
         assert_eq!(config.speech.engine, Engine::System);
+    }
+
+    #[test]
+    fn models_default_to_a_managed_fast_tier_and_no_deep() {
+        let config = Config::parse("").unwrap();
+        assert_eq!(config.models.fast, "qwen3-vl-4b-instruct-q4km");
+        assert!(config.models.deep.is_none() && config.models.fast_endpoint.is_none());
+        let config = Config::parse(
+            "[models]\ndeep_endpoint = \"http://127.0.0.1:8081/v1\"\ndeep_ctx = 32768\n",
+        )
+        .unwrap();
+        assert_eq!(config.models.deep_ctx, 32768);
+        assert!(Config::parse("[models]\nfast_ctx = 10\n").is_err());
+        assert!(Config::parse("[models]\nfasst = \"x\"\n").is_err());
     }
 
     #[test]
