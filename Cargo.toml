@@ -61,5 +61,11 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSResponder", "NSRunningApplication", "NSWorkspace"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGWindow", "CGDirectDisplay"] }
 screencapturekit = { version = "=11.1.2", features = ["macos_14_0"] }
+# M2: the menu-bar app. Carbon hotkeys (no Input Monitoring permission), the
+# tray icon and menu (Linux backends off), and the main dispatch queue for
+# handing tray updates to the main thread.
+global-hotkey = "=0.10.0"
+tray-icon = { version = "=0.26.1", default-features = false }
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
 # M2: microphone permission status (`AVCaptureDevice`) for the permission checklist.
 objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "AVCaptureDevice", "AVMediaFormat"] }

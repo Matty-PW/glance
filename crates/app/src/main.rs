@@ -1,5 +1,5 @@
-//! The `glance` binary. Until the hotkey app exists (M2) this is a set of CLI
-//! spikes; see `docs/DESIGN.md` §14.
+//! The `glance` binary: the menu-bar app (`glance app`) plus the CLI spikes
+//! and checks used to measure each stage; see `docs/DESIGN.md` §14.
 
 mod cmd;
 
@@ -18,6 +18,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// The menu-bar app: hold Ctrl+Opt+G, ask about the screen, hear the answer.
+    App(cmd::app::Args),
     /// List, download and verify models pinned in models.toml.
     Models {
         #[command(subcommand)]
@@ -51,6 +53,8 @@ fn main() -> anyhow::Result<()> {
             .build()
     };
     match cli.command {
+        // Owns the main thread for the app's run loop until Quit.
+        Command::App(args) => cmd::app::run(args),
         Command::Serve(args) => cmd::serve::run(args),
         Command::SttBench(args) => cmd::stt_bench::run(args),
         Command::MicCheck(args) => cmd::mic_check::run(args),

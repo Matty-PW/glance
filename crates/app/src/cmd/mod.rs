@@ -1,3 +1,4 @@
+pub mod app;
 pub mod bench;
 pub mod cache_check;
 pub mod capture_check;
