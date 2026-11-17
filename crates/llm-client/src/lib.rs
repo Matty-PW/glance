@@ -5,10 +5,13 @@
 //! non-loopback [`Endpoint`] yet, and when one is added it must carry the
 //! explicit opt-in described in `docs/DESIGN.md` §11.
 //!
-//! The escalation parser and the managed `llama-server` supervisor land in M4.
+//! [`escalate`] parses FAST's escalation signal; [`server`] runs a managed
+//! `llama-server` per tier.
 
 mod client;
 mod endpoint;
+pub mod escalate;
+pub mod server;
 mod sse;
 mod types;
 
@@ -16,7 +19,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use client::OpenAiClient;
-pub use endpoint::{Endpoint, EndpointError};
+pub use endpoint::{ApiKey, Endpoint, EndpointError};
 pub use types::{
     ChatError, ChatEvent, ChatRequest, ChatStream, ChatSummary, Message, Part, Role, Timings, Usage,
 };

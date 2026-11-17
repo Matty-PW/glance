@@ -42,13 +42,11 @@ impl OpenAiClient {
 
     async fn start(&self, request: ChatRequest) -> Result<ChatStream, ChatError> {
         let body = request.to_body(self.endpoint.model());
-        let response = self
-            .http
-            .post(self.endpoint.chat_url().clone())
-            .json(&body)
-            .send()
-            .await
-            .map_err(ChatError::Connect)?;
+        let mut post = self.http.post(self.endpoint.chat_url().clone()).json(&body);
+        if let Some(key) = self.endpoint.api_key() {
+            post = post.bearer_auth(key.expose());
+        }
+        let response = post.send().await.map_err(ChatError::Connect)?;
 
         let status = response.status();
         if !status.is_success() {

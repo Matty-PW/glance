@@ -28,6 +28,8 @@ enum Command {
     },
     /// Verify a vision model, then run llama-server for it on 127.0.0.1.
     Serve(cmd::serve::Args),
+    /// Start a managed llama-server and check the escalation grammar works.
+    ServerCheck(cmd::server_check::Args),
     /// Check that the server reuses a cached image prefix between requests.
     CacheCheck(cmd::cache_check::Args),
     /// M0 end-to-end run: record, transcribe, ask about a PNG, print timings.
@@ -85,6 +87,7 @@ fn main() -> anyhow::Result<()> {
             runtime.block_on(task)?
         }
         Command::Models { action } => runtime()?.block_on(cmd::models::run(action)),
+        Command::ServerCheck(args) => runtime()?.block_on(cmd::server_check::run(args)),
         Command::CacheCheck(args) => runtime()?.block_on(cmd::cache_check::run(args)),
         Command::Bench(args) => runtime()?.block_on(cmd::bench::run(args)),
     }

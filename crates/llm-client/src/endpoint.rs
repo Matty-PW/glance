@@ -16,11 +16,32 @@ pub enum EndpointError {
     Credentials,
 }
 
+/// A bearer token, held in memory only. Its `Debug` never shows it.
+#[derive(Clone)]
+pub struct ApiKey(String);
+
+impl ApiKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+
+    pub(crate) fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApiKey(redacted)")
+    }
+}
+
 /// An OpenAI-compatible endpoint plus the model name to request from it.
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     chat_url: Url,
     model: String,
+    api_key: Option<ApiKey>,
     /// `localhost` is pinned to 127.0.0.1 so a hosts-file or DNS change cannot
     /// redirect it.
     pub(crate) pinned: Option<(String, SocketAddr)>,
@@ -56,6 +77,7 @@ impl Endpoint {
         Ok(Self {
             chat_url,
             model: model.into(),
+            api_key: None,
             pinned,
         })
     }
@@ -66,6 +88,17 @@ impl Endpoint {
 
     pub fn model(&self) -> &str {
         &self.model
+    }
+
+    /// Send this key as `Authorization: Bearer` (a managed llama-server's
+    /// per-launch key).
+    pub fn with_api_key(mut self, key: ApiKey) -> Self {
+        self.api_key = Some(key);
+        self
+    }
+
+    pub(crate) fn api_key(&self) -> Option<&ApiKey> {
+        self.api_key.as_ref()
     }
 }
 
@@ -117,6 +150,14 @@ mod tests {
                 "{url} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn api_keys_never_show_in_debug_output() {
+        let e = Endpoint::loopback("http://127.0.0.1:8080/v1", "m")
+            .unwrap()
+            .with_api_key(ApiKey::new("s3cret-key"));
+        assert!(!format!("{e:?}").contains("s3cret"));
     }
 
     #[test]
