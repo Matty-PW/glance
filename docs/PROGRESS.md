@@ -11,8 +11,36 @@ reference machine named in `CLAUDE.md`, with synthetic inputs unless noted.
 | Step 1: design (`docs/DESIGN.md`) | Done, approved |
 | Step 2: skeleton, hooks, CI, `deny.toml` | Done. CI has not been observed running on GitHub yet |
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
-| M1: TTS with sentence streaming | **Half done.** System voice works end to end; Kokoro passed its spike but is not built into the app |
-| M2–M5 | Not started |
+| M1: TTS with sentence streaming | Done on the macOS system voice. **Kokoro parked** (see below) |
+| M2: hotkey, live capture, `.app`, permissions | In progress |
+| M3–M5 | Not started |
+
+## Decision: Kokoro parked (2026-11-17)
+
+M2–M4 use the macOS system voice so the full loop works end to end first.
+Kokoro is revisited after M4, or sooner if system-voice quality turns out to
+be a real problem. Reason: Kokoro would add roughly 250–450 ms before the
+first sentence sounds. Measured synthesis per sentence (fp32, 10 threads):
+230–804 ms, median 456 ms. The system voice starts 36–60 ms after a sentence
+is queued.
+
+Left to finish Kokoro:
+1. `AudioOutput` trait and cpal implementation in `crates/audio`: 24 kHz to
+   device-rate resampling, ring buffer, immediate stop, start/finish events.
+2. Move `spikes/kokoro-g2p/src/fallback.rs` into `crates/tts` as the
+   `Phonemizer` over `misaki-rs` (`default-features = false`, exact pin), with
+   unit tests. Fix the known misreads: names, mixed tokens like "Harbor-5G",
+   CamelCase like "CrashLoopBackOff".
+3. A Kokoro `TextToSpeech`: load the verified `kokoro-82m-v1.0-fp32`, map
+   phonemes via `tokenizer.json`, read `raw-f32` voices with a length check,
+   pick the style row by token count, split input over 510 tokens, synthesize
+   ahead of playback on its own thread, emit events, flush on `stop()`.
+4. Pre-synthesize the escalation filler lines at startup.
+5. Engine choice in settings, falling back to the system voice when the
+   model is not installed.
+6. Measure TTFA with Kokoro vs the system voice and do a listening test.
+7. Licence check: `misaki-rs` is MIT, but its README defers to upstream
+   Misaki for the licence of its embedded dictionary data.
 
 ## What is measured
 
@@ -42,29 +70,20 @@ of `glance spike` with synthetic clips: 354–546 ms (target 1.3 s), including
 runs where the image was not yet cached. The voice starts 36–60 ms after a
 sentence is queued. All runs were at volume 0; nobody has listened yet.
 
-**Kokoro spike (M1, in `spikes/kokoro-g2p`).**
-- `misaki-rs` 0.9.0 builds with no espeak. G2P load 25–64 ms, ~2.7 ms per
-  sentence.
-- Every phoneme it emitted over 60 assistant-style sentences is in Kokoro's
-  115-symbol vocabulary, but 15 words had no pronunciation (clock times,
-  names, file paths, "Gmail", "Kubernetes"). With the spike's own fallback,
-  none were left.
-- Synthesis per sentence (median): fp32 at 10 threads 456 ms (9.1x real
-  time); fp32 at 4 threads 728 ms; q8f16 1.4 s (2.8x). fp32 is the one to use.
-- Intelligibility by proxy: transcribing Kokoro's output with Parakeet gave
-  9.9% word errors vs 9.5% for the macOS voice on the same 60 sentences.
-  Errors are mostly number formatting and unusual names.
+**Kokoro spike (M1, `spikes/kokoro-g2p`).** `misaki-rs` 0.9.0 builds without
+espeak (G2P ~2.7 ms per sentence). All its phonemes over 60 test sentences
+are in Kokoro's vocabulary; 15 words had no pronunciation until the spike's
+fallback was added. fp32 runs 9.1x real time at 10 threads (q8f16 only 2.8x).
+Transcribed back with Parakeet: 9.9% word errors vs 9.5% for the system voice.
 
 ## Decisions made, and why
 
 - **`screencapturekit` crate, not `xcap`** for capture: xcap uses the legacy
   `CGWindowListCreateImage` path.
-- **STT is Parakeet v3** (v2 pinned as English-only alternative): far inside
-  budget, ONNX is an allowed format, shares ONNX Runtime with Kokoro.
-  Whisper's GGML `.bin` is banned; Moonshine is hosted off the allowlist.
-- **ONNX Runtime comes from `ort`'s build-time download** (cdn.pyke.io,
-  SHA-256 checked, statically linked). Homebrew's build failed the gate: it
-  links onnx, protobuf, re2 and ~80 abseil dylibs. `deny.toml` allows `ureq`,
+- **STT is Parakeet v3** (v2 pinned as alternative): far inside budget, ONNX
+  format. Whisper's GGML `.bin` is banned; Moonshine is hosted off-allowlist.
+- **ONNX Runtime from `ort`'s build-time download** (SHA-256 checked, static).
+  Homebrew's build links ~80 other Homebrew dylibs. `deny.toml` allows `ureq`,
   `native-tls` and one data licence only beneath `ort-sys`'s build script.
 - **`ort` held at 2.0.0-rc.12**: `transcribe-rs` 0.3.12 does not compile
   against later release candidates.
@@ -84,20 +103,15 @@ sentence is queued. All runs were at volume 0; nobody has listened yet.
    no fixed version exists. Options: add an `ignore` entry with a reason to
    `deny.toml`, or replace or patch the dependency. Needs a decision; CI fails
    until then. `cargo audit` reports it as a warning only.
-2. **Kokoro or not.** Kokoro adds ~250–450 ms per first sentence compared
-   with the system voice (~35 ms). Undecided whether to build it now or park
-   it while M2 uses the system voice.
-3. Nobody has listened to either voice, or run `glance spike` with a real
+2. Nobody has listened to either voice, or run `glance spike` with a real
    voice in a real room.
-4. Only default-quality system voices are installed on the reference machine;
+3. Only default-quality system voices are installed on the reference machine;
    a Premium voice should sound clearly better.
-5. Kokoro still mispronounces some names ("Tomas", "Okafor") and compounds
-   ("Harbor-5G", "CrashLoopBackOff").
-6. The system-voice code has no automated test; `cargo test` runs no main
+4. The system-voice code has no automated test; `cargo test` runs no main
    run loop. The chunker and text cleanup are covered (15 tests).
-7. Both Qwen models hit the ceiling of the synthetic set, so it cannot show
+5. Both Qwen models hit the ceiling of the synthetic set, so it cannot show
    where the 8B reads better than the 4B.
-8. `docs/DESIGN.md` §6 and §13 do not yet include the M1 numbers above.
+6. `docs/DESIGN.md` §6 and §13 do not yet include the M1 numbers above.
 
 ## How to run what exists
 
@@ -121,13 +135,8 @@ glance voices                                # installed English voices
 glance mic-check                             # level and timing, no transcript
 glance stt-bench --stt parakeet-tdt-0.6b-v3-int8 clips/*.wav
 glance bench --endpoint ... --model ... --out eval-local/results/x.json
-```
 
-Eval screens and the Kokoro spike: see `README.md` and `spikes/README.md`.
-
-Checks (run before calling a milestone done):
-
-```sh
+# checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked              # 60 tests
@@ -135,15 +144,11 @@ cargo audit
 cargo deny check                             # currently fails, see open item 1
 ```
 
+Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
+
 ## Next step
 
-Decide open items 1 and 2. Then finish M1:
-1. If Kokoro goes ahead: a cpal `AudioOutput` in `crates/audio`, the
-   phonemizer and fallback moved into `crates/tts` with tests, a Kokoro
-   `TextToSpeech` (fp32, 10 threads, synthesis running ahead of playback),
-   and a flag to choose the engine.
-2. Record the M1 numbers in `docs/DESIGN.md`, run the checks, commit, and
-   write the milestone summary.
-
-M2 (hotkey, live capture, `.app` bundle, permissions) follows. It needs the
-GitHub username for the bundle ID `io.github.<username>.glance`.
+M2: global hotkeys (Ctrl+Opt+G talk, Ctrl+Opt+Shift+G look), live capture,
+tray status, permission checklist, and a signed `Glance.app` (bundle ID
+`io.github.matty-pw.glance`) whose grants survive rebuilds. Open item 1 still
+needs a decision before any milestone can be called done.
