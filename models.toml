@@ -163,6 +163,35 @@ revision = "0bbb45a3365852604aef28b538a8f066f4ccaa85"
   size   = 9384
   sha256 = "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"
 
+# ---- DEEP candidates (vision-language, thinking) ----------------------------
+# Qwen3.8-27B, bartowski's imatrix GGUF. No official Qwen GGUF exists. Its
+# source weights match Qwen/Qwen3.8-27B today (all 18 safetensors shards have
+# the same SHA-256 at 1d4bf0f2, current when this was made, and at 37561816);
+# later Qwen commits changed only the README and training-only template tags.
+# The MTP layers (speculative decoding, `--spec-type draft-mtp`) are inside
+# the weights file. Made with llama.cpp b10896.
+
+[[model]]
+id       = "qwen3.8-27b-q4km"
+role     = "vlm"
+license  = "Apache-2.0"
+repo     = "bartowski/Qwen3.8-27B-GGUF"
+revision = "87410e7b9a5c21e6ca70c0c9cc5237de909fe621"
+
+  [[model.file]]
+  path   = "Qwen3.8-27B-Q4_K_M.gguf"
+  kind   = "weights"
+  format = "gguf"
+  size   = 17442399968
+  sha256 = "880a52af8317974f7b4b064a6bc29ff49e188b91aa218e08eea3078b6b1cc673"
+
+  [[model.file]]
+  path   = "mmproj-Qwen3.8-27B-f16.gguf"
+  kind   = "mmproj"
+  format = "gguf"
+  size   = 927607008
+  sha256 = "cb0a71fe9b84af2552fc6260acf8e9773a29d115c683aba01c72a7ac537b212b"
+
 # ---- Text-to-speech ---------------------------------------------------------
 # Kokoro-82M v1.0, ONNX export (24 kHz mono output). Three precisions of the
 # same model, benchmarked against each other; each needs tokenizer.json. The
