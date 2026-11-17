@@ -795,6 +795,9 @@ dependencies = [
  "glance-llm-client",
  "glance-stt",
  "glance-tts",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
