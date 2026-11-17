@@ -67,8 +67,10 @@ M4 Pro, 48GB.
   run (signed bundle, chord presses, grants surviving rebuilds) needs me.
 - M3's code is done too (sessions: follow-ups, `look` vs `talk`, idle
   expiry, "New session"); it needs a spoken run through the app. M4 is next.
-- TTS is the macOS system voice through M4. Kokoro is parked; don't resume it
-  unless asked (what's left is in `docs/PROGRESS.md`).
+- TTS: Kokoro-82M fp32 is the default voice, the macOS system voice is a
+  config option and the fallback (`config.toml` `[speech]`). The phonemizer is
+  misaki-rs with espeak off; its data-provenance caveat is in `THIRD_PARTY.md`.
+  What is left for Kokoro is in `docs/PROGRESS.md`.
 - `deny.toml` ignores RUSTSEC-2026-0542 (`humantime`, via `transcribe-rs`),
   with my OK; remove it when transcribe-rs drops env_logger 0.10. Any other
   advisory ignore still needs my OK first.

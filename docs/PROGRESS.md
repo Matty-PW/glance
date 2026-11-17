@@ -10,39 +10,37 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | Step 1: design (`docs/DESIGN.md`) | Done, approved |
 | Step 2: skeleton, hooks, CI, `deny.toml` | Done. CI has not been observed running on GitHub yet |
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
-| M1: TTS with sentence streaming | Done on the macOS system voice. **Kokoro parked** (see below) |
+| M1: TTS with sentence streaming | Done on the macOS system voice |
+| Kokoro voice (resumed after M3) | **Code done; Kokoro is the default voice.** Licence decision and listening test left (see below) |
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4–M5 | Not started |
 
-## Decision: Kokoro parked (2026-11-17)
+## Kokoro milestone (resumed 2026-11-17)
 
-M2–M4 use the macOS system voice so the full loop works end to end first.
-Kokoro is revisited after M4, or sooner if system-voice quality turns out to
-be a real problem. Reason: Kokoro would add roughly 250–450 ms before the
-first sentence sounds. Measured synthesis per sentence (fp32, 10 threads):
-230–804 ms, median 456 ms; the system voice starts 36–60 ms after queueing.
-Spike (`spikes/kokoro-g2p`): `misaki-rs` without espeak covers Kokoro's
-vocabulary once the in-house fallback handles unknown words; transcribed back,
-Kokoro scored 9.9% word errors vs 9.5% for the system voice.
+Kokoro-82M is the default voice; the system voice stays available
+(`engine = "system"` in the config, or `--engine system`).
 
-Left to finish Kokoro:
-1. `AudioOutput` trait and cpal implementation in `crates/audio`: 24 kHz to
-   device-rate resampling, ring buffer, immediate stop, start/finish events.
-2. Move `spikes/kokoro-g2p/src/fallback.rs` into `crates/tts` as the
-   `Phonemizer` over `misaki-rs` (`default-features = false`, exact pin), with
-   unit tests. Fix the known misreads: names, mixed tokens like "Harbor-5G",
-   CamelCase like "CrashLoopBackOff".
-3. A Kokoro `TextToSpeech`: load the verified `kokoro-82m-v1.0-fp32`, map
-   phonemes via `tokenizer.json`, read `raw-f32` voices with a length check,
-   pick the style row by token count, split input over 510 tokens, synthesize
-   ahead of playback on its own thread, emit events, flush on `stop()`.
-4. Pre-synthesize the escalation filler lines at startup.
-5. Engine choice in settings, falling back to the system voice when the
-   model is not installed.
-6. Measure TTFA with Kokoro vs the system voice and do a listening test.
-7. Licence check: `misaki-rs` is MIT, but its README defers to upstream
-   Misaki for the licence of its embedded dictionary data.
+Done: phonemizer (`misaki-rs`, espeak off, plus glance's fallback for unknown
+words, behind the `Phonemizer` trait); voice tables (exact length and NaN
+check) and weighted blends; the ONNX wrapper (splits over 510 tokens, rejects
+non-finite output); `AudioOutput` + cpal `Speaker`; `KokoroVoice` behind
+`TextToSpeech` (synthesizes ahead, immediate stop, device opened at key-down
+via `warm_up` and closed after 30 s idle); config file; `glance voices`,
+`glance say --voice/--speed`, `glance tts-bench`; all 28 English voices pinned.
+
+Left:
+1. **Licence decision: `language-tokenizer` 0.1.0 (WTFPL)**, a dependency of
+   misaki-rs that misaki-rs never uses. `cargo deny check` fails on licences
+   until it is allowed (scoped exception) or removed.
+2. Listening test of the samples (`eval-local/kokoro-bench/`) and of voices.
+3. A spoken run through `glance app` with Kokoro, recording the turn's
+   `ttfa_ms`.
+4. Pre-synthesize the escalation filler lines at startup (with M4).
+5. Possibly shorten the first chunk for Kokoro (its synthesis time grows with
+   length; the chunker's early first chunk is 40 characters).
+
+Phonemizer decision: `THIRD_PARTY.md` and `docs/DESIGN.md` §6.3.
 
 ## What is measured
 
@@ -68,6 +66,22 @@ LFM2.5-VL-3B reused nothing for the first question.
 capture at 2048 px 46–49 ms warm, 112 ms for the first; at full size
 (3024x1955) 53–169 ms; downscale + PNG to 1024 px 14 ms. Capture runs at
 key-down, alongside the user's speech, so it is off the TTFA path.
+
+**Kokoro vs the system voice (`glance tts-bench`).** Eight first-chunk
+sentences (5–70 characters), voice af_heart, ONNX Runtime CPU.
+
+| Model | Load | Synth median, 4 / 8 / 10 threads | TTFA cold | TTFA warm median / max |
+|---|---|---|---|---|
+| fp32 (326 MB) | 0.25 s | 629 / 426 / 392 ms | 391 ms | 437 / 565 ms |
+| fp16 (163 MB) | – | fails: every sample NaN or infinite on the CPU path | – | – |
+| q8f16 (86 MB) | 0.47 s | 1535 / 1474 / 1352 ms | 1004 ms | 1344 / 1888 ms |
+| system voice | – | – | 34 ms | 1 / 1 ms* |
+
+TTFA here is `speak()` until the first sample reaches the device (Kokoro) or
+the system voice's start callback (*which can come before sound). fp32 runs
+8.8x real time at 10 threads, so later sentences are ready before the first
+ends. Choice: **fp32, 10 threads**. Expected app TTFA: key-up to first chunk
+~0.4 s (M0/M1) + ~0.44 s = ~0.85 s, under the 1.3 s target.
 
 **Time to first audio, system voice (M1).** Key-up to first sound over six
 `glance spike` runs: 354–546 ms (target 1.3 s), including uncached images
@@ -157,7 +171,11 @@ glance serve qwen3-vl-4b-instruct-q4km       # prints http://127.0.0.1:<port>/v1
 glance spike --png shot.png --endpoint http://127.0.0.1:<port>/v1 \
   --model qwen3-vl-4b-instruct-q4km          # record 5 s, answer aloud, timings
 glance cache-check --png shot.png --endpoint ... --model ...
-glance say "Text to speak." ; glance voices  # system voice, installed voices
+glance voices                                # Kokoro and system voices
+glance say --voice bf_emma --speed 1.1 "Text to speak."
+glance say --voice af_heart:0.6,bm_george:0.4 "A blend."
+glance say --engine system --voice en-GB "The system voice."
+glance tts-bench --out eval-local/kokoro-bench # Kokoro models vs system voice
 glance capture-check                         # live capture: sizes and timings only
 export GLANCE_SIGN_IDENTITY=<SHA-1 from: security find-identity -v -p codesigning>
 cargo xtask bundle                           # signed target/bundle/Glance.app
@@ -170,9 +188,9 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 90 tests
+cargo test --workspace --locked              # 109 tests
 cargo audit
-cargo deny check                             # passes; one documented ignore
+cargo deny check                             # fails on licences: Kokoro item 1
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 

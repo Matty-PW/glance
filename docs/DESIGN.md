@@ -262,6 +262,15 @@ own and were partly corrected "using eSpeak" (GPL-3.0); details and quotes in
 CMUdict-based G2P is the replacement if binaries are ever distributed and that
 data licence is a problem. The CMUdict path is not built.
 
+**Built (2026-11-17), fp32 chosen.** `crates/tts/src/kokoro/`: `Phonemizer`
+trait and `Misaki`, `VoiceStyle` (raw-f32, exact length, blends),
+`KokoroModel`, and `KokoroVoice` (implements `TextToSpeech`; plays through
+`glance_audio::Speaker`). Benchmarks in `docs/PROGRESS.md`: fp32 at 10 threads
+gives ~0.44 s to first audio; the fp16 export emits only NaN on the CPU path
+and is refused; q8f16 is ~3x slower. Kokoro is the default engine; the system
+voice is a config option and the fallback when Kokoro cannot start. Settings
+live in `config.toml` (`[speech]`).
+
 **Earlier status (M1): parked.** The time-boxed spike passed all three checks (results and
 the remaining work are in `docs/PROGRESS.md`; the spike code is in
 `spikes/kokoro-g2p`), but Kokoro would add roughly 250–450 ms before the first
