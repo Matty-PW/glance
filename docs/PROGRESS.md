@@ -14,7 +14,8 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | Kokoro voice (resumed after M3) | **Code done; Kokoro is the default voice.** Licence decision and listening test left (see below) |
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
-| M4–M5 | Not started |
+| M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
+| M5 | Not started |
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -41,6 +42,35 @@ Left:
    length; the chunker's early first chunk is 40 characters).
 
 Phonemizer decision: `THIRD_PARTY.md` and `docs/DESIGN.md` §6.3.
+
+## M4 (in progress)
+
+Done:
+- `llm-client::escalate`: the streaming gate (DESIGN §7.3) and the GBNF
+  grammar; 7 tests.
+- `llm-client::server`: `ManagedServer` (127.0.0.1, random port, per-launch
+  key in `LLAMA_API_KEY`, `/health` wait, `/props` vision check, output
+  discarded, killed on drop). `glance server-check <id>` on Qwen3-VL-4B:
+  started in 3.9 s; with the grammar and `stream: true`, an escalating
+  request produced a valid signal (first token 241 ms) and a normal one a
+  plain answer (203 ms).
+- Orchestrator: escalation flow (filler by reason, DEEP with its own 2048 px
+  copy, never gated, thinking never spoken, one escalation per turn, invalid
+  signal speaks "Sorry, ask me again"), DEEP prewarm in the background after
+  FAST's; 6 tests.
+- App: `[models]` in `config.toml` (managed `fast`/`deep` ids or
+  `*_endpoint`); `glance app` runs FAST itself by default; Quit stops the
+  servers.
+
+Left:
+1. Choose and pin DEEP candidates (DESIGN §7.2), download (17–22 GB each,
+   needs the maintainer's OK), run the DEEP bake-off.
+2. A `glance bench` mode for escalated turns (filler and DEEP timings,
+   format compliance with and without the grammar).
+3. Measure whether DEEP's background prewarm slows FAST (DESIGN §4).
+4. Pre-synthesize the filler lines when Kokoro is the voice.
+5. Managed servers are orphaned if glance crashes (macOS has no
+   parent-death signal); only Quit and Ctrl-C stop them.
 
 ## What is measured
 
@@ -188,7 +218,7 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 109 tests
+cargo test --workspace --locked              # 126 tests
 cargo audit
 cargo deny check                             # fails on licences: Kokoro item 1
 ```

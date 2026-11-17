@@ -66,7 +66,9 @@ M4 Pro, 48GB.
   app`, permissions, `cargo xtask bundle`, `capture-check`); its acceptance
   run (signed bundle, chord presses, grants surviving rebuilds) needs me.
 - M3's code is done too (sessions: follow-ups, `look` vs `talk`, idle
-  expiry, "New session"); it needs a spoken run through the app. M4 is next.
+  expiry, "New session"); it needs a spoken run through the app.
+- M4 is in progress: escalation and managed llama-servers are done; the DEEP
+  model is not chosen or downloaded yet (see `docs/PROGRESS.md`).
 - TTS: Kokoro-82M fp32 is the default voice, the macOS system voice is a
   config option and the fallback (`config.toml` `[speech]`). The phonemizer is
   misaki-rs with espeak off; its data-provenance caveat is in `THIRD_PARTY.md`.

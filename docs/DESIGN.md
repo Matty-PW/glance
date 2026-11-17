@@ -638,7 +638,7 @@ end-to-end run is `glance spike` (see README).
 | Parakeet meets the STT budget | **Settled in M0: ~90 ms for a 3 s clip** (§5) |
 | STT accuracy on a real voice in a real room (M0 used synthetic speech) | first spoken `glance spike` run |
 | Whether the 8B reads real screens better than the 4B (synthetic set hit the ceiling) | real use; rerun `glance bench` with harder screens |
-| Chat endpoint accepts `grammar` with `stream: true`; streamed `reasoning_content` field | M0 / M4 |
+| Chat endpoint accepts `grammar` with `stream: true`; streamed `reasoning_content` field | **Grammar settled in M4: yes on llama-server 1.0.0** (`glance server-check`); `reasoning_content` with a thinking DEEP model still open |
 | AVSpeechSynthesizer via objc2 bindings: delegate callbacks, run loop in a CLI | **Settled in M1: works; callbacks arrive only on the main thread's run loop**, so the main thread must keep it turning (§6.2) |
 | misaki-rs phonemes match Kokoro's vocab; quality of the no-espeak fallback | **Settled in M1: yes, with an in-house fallback for unknown words** (§6.3) |
 | System-voice quality is good enough for daily use (all M1 tests ran at volume 0) | maintainer listening test |
@@ -695,7 +695,9 @@ end-to-end run is `glance spike` (see README).
   placeholder; history capped at 12 exchanges; ends after 10 idle minutes or
   from the tray's "New session" (shown with question count and screenshot
   age). Tested with mocks.
-- **M4**: escalation, managed llama-server pair, DEEP bake-off report.
+- **M4** (in progress): escalation, managed llama-server pair, DEEP bake-off
+  report. Escalation gate, managed servers and the orchestrator's escalation
+  flow are built and tested; DEEP candidates are not yet downloaded.
 - **M5**: settings, overlay, Keychain, model manifest management.
 
 Each milestone ends with tests, `cargo audit`, `cargo deny check`, a commit (never
