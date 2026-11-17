@@ -18,6 +18,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::Instant;
 
+use crate::session::{Commit, Shot};
 use crate::workers::{MicWorker, Reply, SttWorker};
 use crate::{Chord, Outcome, Parts, TurnConfig, TurnError, TurnReport, TurnState};
 
@@ -87,7 +88,8 @@ impl<T> Future for AbortOnDrop<T> {
 /// turn so that a cancelled turn cannot change the state.
 pub(crate) enum Internal {
     State(u64, TurnState),
-    Done(Box<TurnReport>),
+    /// The turn is over. `Commit` is present only when it was answered.
+    Done(Box<TurnReport>, Option<Commit>),
 }
 
 struct Notifier<'a> {
@@ -101,11 +103,11 @@ impl Notifier<'_> {
     }
 }
 
-/// Result of the key-down work.
+/// Result of the key-down work. A follow-up captures nothing.
 pub(crate) struct Prepared {
-    image: Part,
-    capture: Duration,
-    encode: Duration,
+    shot: Option<Shot>,
+    capture: Option<Duration>,
+    encode: Option<Duration>,
     prewarm: Option<Prewarm>,
 }
 
@@ -114,10 +116,25 @@ struct Prewarm {
     timings: Option<Timings>,
 }
 
-/// Key-down: capture and encode the screen, then send the image alone so the
-/// server has processed it by the time the question arrives
-/// (`docs/DESIGN.md` §4, "Prompt layout and prewarm").
-pub(crate) async fn prepare(shared: Arc<Shared>) -> Result<Prepared, TurnError> {
+/// Key-down: when the turn needs a screenshot, capture and encode the
+/// screen, then send history + image without a question, so the server has
+/// processed the image by the time the question arrives (`docs/DESIGN.md`
+/// §4, "Prompt layout and prewarm"). A follow-up needs neither: its prefix
+/// is already cached from the previous turn.
+pub(crate) async fn prepare(
+    shared: Arc<Shared>,
+    history: Vec<Message>,
+    capture: bool,
+) -> Result<Prepared, TurnError> {
+    if !capture {
+        return Ok(Prepared {
+            shot: None,
+            capture: None,
+            encode: None,
+            prewarm: None,
+        });
+    }
+    let taken = Instant::now();
     let capture = Arc::clone(&shared.capture);
     let max_edge = shared.config.max_edge;
     let (png, capture_time, encode_time) =
@@ -135,7 +152,10 @@ pub(crate) async fn prepare(shared: Arc<Shared>) -> Result<Prepared, TurnError> 
 
     let prewarm = if shared.config.prewarm {
         let started = Instant::now();
-        let messages = vec![shared.system(), Message::user(vec![image.clone()])];
+        let mut messages = Vec::with_capacity(history.len() + 2);
+        messages.push(shared.system());
+        messages.extend(history);
+        messages.push(Message::user(vec![image.clone()]));
         // A failed prewarm only costs latency; the question reports the error.
         let summary = run_to_end(&*shared.chat, shared.request(messages, 1)).await;
         Some(Prewarm {
@@ -146,9 +166,9 @@ pub(crate) async fn prepare(shared: Arc<Shared>) -> Result<Prepared, TurnError> 
         None
     };
     Ok(Prepared {
-        image,
-        capture: capture_time,
-        encode: encode_time,
+        shot: Some(Shot { image, taken }),
+        capture: Some(capture_time),
+        encode: Some(encode_time),
         prewarm,
     })
 }
@@ -172,6 +192,8 @@ pub(crate) struct Started {
     pub(crate) mic_started: Reply<Result<(), AudioError>>,
     pub(crate) recording: Reply<Result<Recording, AudioError>>,
     pub(crate) prepare: AbortOnDrop<Result<Prepared, TurnError>>,
+    /// Earlier exchanges, already laid out for this turn.
+    pub(crate) history: Vec<Message>,
 }
 
 /// Key-up to the end of the turn. Always ends with exactly one
@@ -190,16 +212,20 @@ pub(crate) async fn answer(
     let mut report = TurnReport::new(started.turn, started.chord, Outcome::Answered);
     report.held = Some(started.held);
 
-    if let Err(error) = run(&shared, started, &mut report, &notify).await {
-        shared.tts.stop();
-        if let Some(line) = error.spoken_line() {
-            notify.state(TurnState::Speaking);
-            speak_line(&shared, line).await;
+    let commit = match run(&shared, started, &mut report, &notify).await {
+        Ok(commit) => Some(commit),
+        Err(error) => {
+            shared.tts.stop();
+            if let Some(line) = error.spoken_line() {
+                notify.state(TurnState::Speaking);
+                speak_line(&shared, line).await;
+            }
+            report.outcome = Outcome::Failed(error);
+            None
         }
-        report.outcome = Outcome::Failed(error);
-    }
+    };
     report.total = Some(key_up.elapsed());
-    let _ = internal.send(Internal::Done(Box::new(report)));
+    let _ = internal.send(Internal::Done(Box::new(report), commit));
 }
 
 async fn run(
@@ -207,12 +233,13 @@ async fn run(
     started: Started,
     report: &mut TurnReport,
     notify: &Notifier<'_>,
-) -> Result<(), TurnError> {
+) -> Result<Commit, TurnError> {
     let Started {
         key_up,
         mic_started,
         recording,
         prepare,
+        history,
         ..
     } = started;
 
@@ -248,8 +275,10 @@ async fn run(
     let wait_started = Instant::now();
     let prepared = prepare.await.map_err(|_| TurnError::WorkerGone)??;
     report.prewarm_wait = Some(wait_started.elapsed());
-    report.capture = Some(prepared.capture);
-    report.encode = Some(prepared.encode);
+    report.capture = prepared.capture;
+    report.encode = prepared.encode;
+    report.fresh_image = Some(prepared.shot.is_some());
+    report.history = Some(history.len() / 2);
     if let Some(prewarm) = &prepared.prewarm {
         report.prewarm = Some(prewarm.elapsed);
         if let Some(t) = &prewarm.timings {
@@ -259,10 +288,15 @@ async fn run(
     }
     notify.state(TurnState::Thinking);
 
-    let messages = vec![
-        shared.system(),
-        Message::user(vec![prepared.image, Part::Text(transcript.text)]),
-    ];
+    let mut question = Vec::with_capacity(2);
+    if let Some(shot) = &prepared.shot {
+        question.push(shot.image.clone());
+    }
+    question.push(Part::Text(transcript.text.clone()));
+    let mut messages = Vec::with_capacity(history.len() + 2);
+    messages.push(shared.system());
+    messages.extend(history);
+    messages.push(Message::user(question));
     let mut stream = shared
         .chat
         .chat(shared.request(messages, shared.config.max_tokens))
@@ -274,6 +308,8 @@ async fn run(
     let mut queued: Vec<UtteranceId> = Vec::new();
     let mut ended = 0;
     let mut summary: Option<ChatSummary> = None;
+    // The reply as the model wrote it, kept for the next turn's history.
+    let mut answer = String::new();
     let queue = |chunk: String, queued: &mut Vec<UtteranceId>, report: &mut TurnReport| {
         if chunk.trim().is_empty() {
             return Ok(());
@@ -292,6 +328,7 @@ async fn run(
             event = stream.next(), if summary.is_none() => match event {
                 Some(Ok(ChatEvent::Content(text))) => {
                     report.ttft.get_or_insert_with(|| key_up.elapsed());
+                    answer.push_str(&text);
                     for chunk in chunker.push(&text) {
                         queue(chunk, &mut queued, report)?;
                     }
@@ -332,7 +369,11 @@ async fn run(
         report.cache_n = t.cache_n;
         report.tokens_per_second = t.predicted_per_second;
     }
-    Ok(())
+    Ok(Commit {
+        question: transcript.text,
+        answer: answer.trim().to_owned(),
+        shot: prepared.shot,
+    })
 }
 
 /// Speak one fixed line and wait until it is over (or a timeout passes).

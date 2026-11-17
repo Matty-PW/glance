@@ -115,6 +115,11 @@ pub struct TurnReport {
     pub turn: u64,
     pub chord: Chord,
     pub outcome: Outcome,
+    /// Whether the question came with a new screenshot (`false` for a
+    /// follow-up on the session's screenshot).
+    pub fresh_image: Option<bool>,
+    /// Earlier exchanges sent with the question.
+    pub history: Option<usize>,
     /// How long the chord was held (the recording length).
     pub held: Option<Duration>,
     /// Delay before the microphone delivered its first samples.
@@ -146,6 +151,8 @@ impl TurnReport {
             turn,
             chord,
             outcome,
+            fresh_image: None,
+            history: None,
             held: None,
             mic_start: None,
             capture: None,
@@ -178,6 +185,12 @@ impl fmt::Display for TurnReport {
             Outcome::ShortPress => write!(f, " outcome=short_press")?,
             Outcome::Cancelled => write!(f, " outcome=cancelled")?,
             Outcome::Failed(e) => write!(f, " outcome=failed error={}", e.code())?,
+        }
+        if let Some(fresh) = self.fresh_image {
+            write!(f, " image={}", if fresh { "fresh" } else { "reused" })?;
+        }
+        if let Some(n) = self.history {
+            write!(f, " history={n}")?;
         }
         let times = [
             ("ttfa_ms", self.ttfa),

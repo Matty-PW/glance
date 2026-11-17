@@ -12,7 +12,7 @@
 mod hotkeys;
 mod tray;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -21,7 +21,7 @@ use glance_audio::Microphone;
 use glance_capture::live::{LiveScreen, request_screen_recording, screen_recording_granted};
 use glance_llm_client::{Endpoint, OpenAiClient};
 use glance_orchestrator::{
-    Orchestrator, Outcome, Parts, TurnConfig, TurnReport, TurnState, Update,
+    Controller, Orchestrator, Outcome, Parts, TurnConfig, TurnReport, TurnState, Update,
 };
 use glance_stt::Parakeet;
 use glance_tts::system_voice::SystemVoice;
@@ -115,7 +115,7 @@ pub fn run(args: Args) -> Result<()> {
         eprintln!("glance: Screen Recording is not granted; asking (relaunch after granting)");
         request_screen_recording();
     }
-    runtime.spawn(refresh_permissions());
+    runtime.spawn(refresh_tray());
 
     eprintln!("glance: running ({model_line}). Quit from the menu-bar icon.");
     app.run();
@@ -161,10 +161,21 @@ async fn start(
         ..Default::default()
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
+    let _ = CONTROLLER.set(orchestrator.controller());
     tokio::spawn(forward_updates(updates));
     show(View::state(TurnState::Idle));
     eprintln!("glance: ready");
     orchestrator.run(key_events).await;
+}
+
+/// Set once the pipeline is running; the tray's "New session" uses it.
+static CONTROLLER: OnceLock<Controller> = OnceLock::new();
+
+/// End the session (tray menu). Does nothing before the pipeline is up.
+fn new_session() {
+    if let Some(controller) = CONTROLLER.get() {
+        controller.new_session();
+    }
 }
 
 fn fail(message: String) {
@@ -183,6 +194,12 @@ async fn forward_updates(mut updates: UnboundedReceiver<Update>) {
                     show(View::turn_failed(error.to_string()));
                 }
             }
+            Update::Session(info) => {
+                if info.questions == 0 {
+                    eprintln!("glance: session ended");
+                }
+                show(View::session(info));
+            }
         }
     }
 }
@@ -196,13 +213,13 @@ fn log_report(report: &TurnReport) {
     }
 }
 
-/// Permissions can change in System Settings at any time; re-read them
-/// every few seconds so the checklist stays true.
-async fn refresh_permissions() {
+/// Permissions can change in System Settings at any time, and the
+/// screenshot's age moves on: refresh both every few seconds.
+async fn refresh_tray() {
     let mut tick = tokio::time::interval(Duration::from_secs(3));
     loop {
         tick.tick().await;
-        DispatchQueue::main().exec_async(tray::refresh_permissions);
+        DispatchQueue::main().exec_async(tray::refresh);
     }
 }
 

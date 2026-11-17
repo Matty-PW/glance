@@ -1,5 +1,6 @@
-//! The menu-bar icon and its menu: a status line, the permission checklist
-//! with links into System Settings, and Quit.
+//! The menu-bar icon and its menu: a status line, the session (question
+//! count, screenshot age, "New session"), the permission checklist with links
+//! into System Settings, and Quit.
 //!
 //! AppKit objects may only be used on the main thread, so all tray state
 //! lives in a thread-local, and every function here is called on the main
@@ -10,7 +11,7 @@ use std::cell::RefCell;
 use dispatch2::DispatchQueue;
 use glance_audio::permission::{MicPermission, microphone_permission};
 use glance_capture::live::screen_recording_granted;
-use glance_orchestrator::TurnState;
+use glance_orchestrator::{SessionInfo, TurnState};
 use objc2::MainThreadMarker;
 use objc2_app_kit::NSApplication;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -25,6 +26,7 @@ const MIC_SETTINGS: &str =
 
 const ID_SCREEN: &str = "permission-screen";
 const ID_MIC: &str = "permission-mic";
+const ID_NEW_SESSION: &str = "new-session";
 const ID_QUIT: &str = "quit";
 
 /// A change to show. Built on any thread, applied on the main thread.
@@ -36,6 +38,7 @@ pub enum View {
     Fatal(String),
     /// The last turn failed; shown beside "Ready" until the next press.
     TurnFailed(String),
+    Session(SessionInfo),
 }
 
 impl View {
@@ -54,11 +57,17 @@ impl View {
     pub fn turn_failed(text: impl Into<String>) -> Self {
         View::TurnFailed(text.into())
     }
+
+    pub fn session(info: SessionInfo) -> Self {
+        View::Session(info)
+    }
 }
 
 struct Tray {
     icon: TrayIcon,
     status: MenuItem,
+    session: MenuItem,
+    new_session: MenuItem,
     screen: MenuItem,
     mic: MenuItem,
 }
@@ -71,6 +80,7 @@ struct Ui {
     title: &'static str,
     fatal: bool,
     problem: Option<String>,
+    session: Option<SessionInfo>,
 }
 
 thread_local! {
@@ -81,6 +91,7 @@ thread_local! {
             title: "",
             fatal: false,
             problem: None,
+            session: None,
         })
     };
 }
@@ -88,15 +99,25 @@ thread_local! {
 /// Create the icon and menu. Must run after the app's run loop has started.
 pub fn install(model_line: &str) {
     let status = MenuItem::new("Starting…", false, None);
+    let session = MenuItem::new("Session: none", false, None);
+    let new_session = MenuItem::with_id(ID_NEW_SESSION, "New session", false, None);
     let screen = MenuItem::with_id(ID_SCREEN, "Screen Recording: …", false, None);
     let mic = MenuItem::with_id(ID_MIC, "Microphone: …", false, None);
     let quit = MenuItem::with_id(ID_QUIT, "Quit glance", true, None);
     let menu = Menu::new();
     let built = menu.append_items(&[
         &status,
+        &session,
+        &new_session,
+        &PredefinedMenuItem::separator(),
         &MenuItem::new(model_line, false, None),
         &MenuItem::new(
-            format!("Hold {TALK_LABEL} or {LOOK_LABEL} and ask"),
+            format!("Hold {TALK_LABEL}: ask about the screenshot"),
+            false,
+            None,
+        ),
+        &MenuItem::new(
+            format!("Hold {LOOK_LABEL}: take a fresh look and ask"),
             false,
             None,
         ),
@@ -129,12 +150,14 @@ pub fn install(model_line: &str) {
         ui.tray = Some(Tray {
             icon,
             status,
+            session,
+            new_session,
             screen,
             mic,
         });
         ui.render();
     });
-    refresh_permissions();
+    refresh();
 }
 
 /// Apply a change.
@@ -145,9 +168,11 @@ pub fn apply(view: View) {
     });
 }
 
-/// Re-read both permissions and update the checklist.
-pub fn refresh_permissions() {
+/// Re-read both permissions and update the checklist and the screenshot's
+/// age. Called every few seconds.
+pub fn refresh() {
     UI.with_borrow(|ui| {
+        ui.render_session();
         let Some(tray) = &ui.tray else { return };
         if screen_recording_granted() {
             tray.screen.set_text("Screen Recording: allowed");
@@ -187,6 +212,7 @@ impl Ui {
                 self.title = "";
             }
             View::TurnFailed(problem) => self.problem = Some(problem),
+            View::Session(info) => self.session = Some(info),
             View::State(state) => {
                 if state == TurnState::Listening {
                     self.problem = None;
@@ -207,7 +233,15 @@ impl Ui {
         }
     }
 
+    fn render_session(&self) {
+        let Some(tray) = &self.tray else { return };
+        let questions = self.session.map_or(0, |s| s.questions);
+        tray.session.set_text(session_line(self.session));
+        tray.new_session.set_enabled(questions > 0);
+    }
+
     fn render(&self) {
+        self.render_session();
         let Some(tray) = &self.tray else { return };
         tray.status.set_text(&self.status);
         tray.icon
@@ -222,12 +256,37 @@ fn on_menu(id: &str) {
     match id {
         ID_SCREEN => open_settings(SCREEN_SETTINGS),
         ID_MIC => open_settings(MIC_SETTINGS),
+        ID_NEW_SESSION => super::new_session(),
         ID_QUIT => DispatchQueue::main().exec_async(|| {
             if let Some(mtm) = MainThreadMarker::new() {
                 NSApplication::sharedApplication(mtm).terminate(None);
             }
         }),
         _ => {}
+    }
+}
+
+/// "Session: 3 questions, screenshot 2 min old", so a stale screenshot is
+/// visible (the overlay that shows it arrives in M5).
+fn session_line(session: Option<SessionInfo>) -> String {
+    let Some(info) = session.filter(|s| s.questions > 0) else {
+        return format!("Session: none ({TALK_LABEL} starts one)");
+    };
+    let questions = match info.questions {
+        1 => "1 question".to_owned(),
+        n => format!("{n} questions"),
+    };
+    match info.screenshot_taken {
+        Some(taken) => format!("Session: {questions}, screenshot {}", age(taken.elapsed())),
+        None => format!("Session: {questions}"),
+    }
+}
+
+fn age(elapsed: std::time::Duration) -> String {
+    match elapsed.as_secs() {
+        0..10 => "just taken".into(),
+        s @ 10..60 => format!("{s} s old"),
+        s => format!("{} min old", s / 60),
     }
 }
 
@@ -262,4 +321,30 @@ fn band(d: f32, inner: f32, outer: f32) -> f32 {
     (d - inner + 0.5)
         .clamp(0.0, 1.0)
         .min((outer - d + 0.5).clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    #[test]
+    fn session_line_reads_naturally() {
+        assert_eq!(
+            session_line(None),
+            format!("Session: none ({TALK_LABEL} starts one)")
+        );
+        let taken = Instant::now() - Duration::from_secs(150);
+        let info = SessionInfo {
+            questions: 3,
+            screenshot_taken: Some(taken),
+        };
+        assert_eq!(
+            session_line(Some(info)),
+            "Session: 3 questions, screenshot 2 min old"
+        );
+        assert_eq!(age(Duration::from_secs(3)), "just taken");
+        assert_eq!(age(Duration::from_secs(42)), "42 s old");
+    }
 }

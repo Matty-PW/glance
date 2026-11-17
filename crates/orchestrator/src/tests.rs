@@ -8,7 +8,7 @@ use std::time::Duration;
 use glance_audio::{AudioClip, AudioError, AudioInput, Recording};
 use glance_capture::{CaptureError, ScreenCapture, Screenshot};
 use glance_llm_client::{
-    ChatError, ChatEvent, ChatModel, ChatRequest, ChatStream, ChatSummary, Part, Timings,
+    ChatError, ChatEvent, ChatModel, ChatRequest, ChatStream, ChatSummary, Part, Role, Timings,
 };
 use glance_stt::{SpeechToText, SttError, Transcript};
 use glance_tts::{SpeechEvent, TextToSpeech, TtsError, UtteranceId};
@@ -16,21 +16,24 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use crate::{
-    Chord, HotkeyEvent, Orchestrator, Outcome, Parts, TurnConfig, TurnError, TurnReport, TurnState,
-    Update,
+    Chord, Controller, HotkeyEvent, Orchestrator, Outcome, Parts, SessionInfo, TurnConfig,
+    TurnError, TurnReport, TurnState, Update,
 };
 
 // ---- mocks -----------------------------------------------------------------
 
 struct MockCapture {
     fail: Option<fn() -> CaptureError>,
+    count: Arc<AtomicUsize>,
 }
 
 impl ScreenCapture for MockCapture {
+    /// Every capture has different pixels, so requests can tell them apart.
     fn capture(&self) -> Result<Screenshot, CaptureError> {
+        let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
         match self.fail {
             Some(error) => Err(error()),
-            None => Screenshot::from_rgba(4, 4, vec![200; 4 * 4 * 4]),
+            None => Screenshot::from_rgba(4, 4, vec![(n * 10) as u8; 4 * 4 * 4]),
         }
     }
 }
@@ -63,18 +66,18 @@ impl AudioInput for MockMic {
     }
 }
 
+/// Hands out `texts` in order, repeating the last one.
 struct MockStt {
-    text: &'static str,
+    texts: Vec<&'static str>,
     calls: Arc<AtomicUsize>,
 }
 
 impl SpeechToText for MockStt {
     fn transcribe(&mut self, clip: &AudioClip) -> Result<Transcript, SttError> {
         assert_eq!(clip.sample_rate(), glance_stt::SAMPLE_RATE);
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(Transcript {
-            text: self.text.into(),
-        })
+        let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        let text = self.texts[n.min(self.texts.len() - 1)];
+        Ok(Transcript { text: text.into() })
     }
 }
 
@@ -82,14 +85,31 @@ impl SpeechToText for MockStt {
 #[derive(Debug, Clone, PartialEq)]
 struct SeenRequest {
     max_tokens: Option<u32>,
-    /// Parts of the last (user) message: "image" or the text.
-    user_parts: Vec<String>,
+    /// Every message after the system prompt, as `U:part+part` or `A:text`.
+    /// Images are `img1`, `img2`… in the order the mock first saw them;
+    /// the placeholder for a replaced screenshot is `earlier`.
+    layout: Vec<String>,
 }
 
 struct MockChat {
     reply: Vec<ChatEvent>,
     seen: Arc<Mutex<Vec<SeenRequest>>>,
+    images: Mutex<Vec<Arc<[u8]>>>,
     fail_question: bool,
+}
+
+impl MockChat {
+    fn label(&self, png: &Arc<[u8]>) -> String {
+        let mut images = self.images.lock().unwrap();
+        let index = match images.iter().position(|known| known == png) {
+            Some(i) => i,
+            None => {
+                images.push(Arc::clone(png));
+                images.len() - 1
+            }
+        };
+        format!("img{}", index + 1)
+    }
 }
 
 impl ChatModel for MockChat {
@@ -97,23 +117,30 @@ impl ChatModel for MockChat {
         &self,
         request: ChatRequest,
     ) -> std::pin::Pin<Box<dyn Future<Output = Result<ChatStream, ChatError>> + Send + '_>> {
-        let user_parts = request
+        let layout = request
             .messages
-            .last()
+            .iter()
+            .skip(1)
             .map(|m| {
-                m.parts
+                let parts: Vec<String> = m
+                    .parts
                     .iter()
                     .map(|p| match p {
-                        Part::Png(_) => "image".to_owned(),
+                        Part::Png(png) => self.label(png),
+                        Part::Text(t) if t == crate::session::EARLIER_SCREENSHOT => {
+                            "earlier".to_owned()
+                        }
                         Part::Text(t) => t.clone(),
                     })
-                    .collect()
+                    .collect();
+                let role = if m.role == Role::User { "U" } else { "A" };
+                format!("{role}:{}", parts.join("+"))
             })
-            .unwrap_or_default();
+            .collect();
         let prewarm = request.max_tokens == Some(1);
         self.seen.lock().unwrap().push(SeenRequest {
             max_tokens: request.max_tokens,
-            user_parts,
+            layout,
         });
         let events = if prewarm {
             vec![ChatEvent::Done(ChatSummary {
@@ -189,7 +216,7 @@ impl TextToSpeech for MockTts {
 // ---- harness ---------------------------------------------------------------
 
 struct Setup {
-    transcript: &'static str,
+    transcripts: Vec<&'static str>,
     reply: Vec<ChatEvent>,
     capture_fails: Option<fn() -> CaptureError>,
     silent_mic: bool,
@@ -201,7 +228,7 @@ struct Setup {
 impl Default for Setup {
     fn default() -> Self {
         Self {
-            transcript: "what is this window",
+            transcripts: vec!["what is this window"],
             reply: reply(&["It is a code ", "editor. It shows ", "a Rust file."]),
             capture_fails: None,
             silent_mic: false,
@@ -240,6 +267,8 @@ struct Harness {
     stt_calls: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<SeenRequest>>>,
     tts: Arc<TtsLog>,
+    captures: Arc<AtomicUsize>,
+    controller: Controller,
 }
 
 impl Harness {
@@ -248,22 +277,25 @@ impl Harness {
         let stt_calls = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let tts_log = Arc::new(TtsLog::default());
+        let captures = Arc::new(AtomicUsize::new(0));
         let (events, speech_events) = mpsc::unbounded_channel();
         let parts = Parts {
             capture: Arc::new(MockCapture {
                 fail: setup.capture_fails,
+                count: Arc::clone(&captures),
             }),
             mic: Box::new(MockMic {
                 log: Arc::clone(&mic),
                 silent: setup.silent_mic,
             }),
             stt: Box::new(MockStt {
-                text: setup.transcript,
+                texts: setup.transcripts,
                 calls: Arc::clone(&stt_calls),
             }),
             chat: Arc::new(MockChat {
                 reply: setup.reply,
                 seen: Arc::clone(&requests),
+                images: Mutex::new(Vec::new()),
                 fail_question: setup.chat_fails,
             }),
             tts: Arc::new(MockTts {
@@ -276,6 +308,7 @@ impl Harness {
             speech_events,
         };
         let (orchestrator, updates) = Orchestrator::new(parts, setup.config);
+        let controller = orchestrator.controller();
         let (keys, key_rx) = mpsc::unbounded_channel();
         let task = tokio::spawn(orchestrator.run(key_rx));
         Self {
@@ -286,6 +319,8 @@ impl Harness {
             stt_calls,
             requests,
             tts: tts_log,
+            captures,
+            controller,
         }
     }
 
@@ -326,6 +361,20 @@ impl Harness {
         self.tts.spoken.lock().unwrap().clone()
     }
 
+    fn captures(&self) -> usize {
+        self.captures.load(Ordering::SeqCst)
+    }
+
+    /// Hold `chord` long enough to count, then wait for the turn to end.
+    async fn ask(&mut self, chord: Chord) -> Vec<Update> {
+        self.hold(chord, 150).await;
+        self.until_idle().await
+    }
+
+    fn requests(&self) -> Vec<SeenRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+
     fn questions(&self) -> Vec<SeenRequest> {
         self.requests
             .lock()
@@ -342,7 +391,17 @@ fn states(updates: &[Update]) -> Vec<TurnState> {
         .iter()
         .filter_map(|u| match u {
             Update::State(s) => Some(*s),
-            Update::Report(_) => None,
+            _ => None,
+        })
+        .collect()
+}
+
+fn sessions(updates: &[Update]) -> Vec<SessionInfo> {
+    updates
+        .iter()
+        .filter_map(|u| match u {
+            Update::Session(info) => Some(*info),
+            _ => None,
         })
         .collect()
 }
@@ -352,7 +411,7 @@ fn reports(updates: &[Update]) -> Vec<TurnReport> {
         .iter()
         .filter_map(|u| match u {
             Update::Report(r) => Some((**r).clone()),
-            Update::State(_) => None,
+            _ => None,
         })
         .collect()
 }
@@ -376,17 +435,16 @@ async fn a_held_chord_is_answered_aloud_sentence_by_sentence() {
     );
 
     // Image-only prewarm first, then image + transcript.
-    let requests = h.requests.lock().unwrap().clone();
     assert_eq!(
-        requests,
+        h.requests(),
         [
             SeenRequest {
                 max_tokens: Some(1),
-                user_parts: vec!["image".into()],
+                layout: vec!["U:img1".into()],
             },
             SeenRequest {
                 max_tokens: Some(200),
-                user_parts: vec!["image".into(), "what is this window".into()],
+                layout: vec!["U:img1+what is this window".into()],
             },
         ]
     );
@@ -504,7 +562,7 @@ async fn failed_turn(setup: Setup) -> (Harness, TurnError) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_speech_says_so_and_asks_nothing() {
     let (h, error) = failed_turn(Setup {
-        transcript: "",
+        transcripts: vec![""],
         ..Default::default()
     })
     .await;
@@ -586,4 +644,147 @@ async fn shutting_down_the_hotkeys_cancels_the_turn_and_returns() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(h.mic.stops.load(Ordering::SeqCst), 1);
+}
+
+// ---- sessions (M3) ---------------------------------------------------------
+
+const ANSWER: &str = "It is a code editor. It shows a Rust file.";
+
+fn layouts(requests: &[SeenRequest]) -> Vec<Vec<String>> {
+    requests.iter().map(|r| r.layout.clone()).collect()
+}
+
+fn a(text: &str) -> String {
+    format!("A:{text}")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn talk_follows_up_on_the_same_screenshot_without_capturing_again() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2"],
+        ..Default::default()
+    });
+    h.ask(Chord::Talk).await;
+    let updates = h.ask(Chord::Talk).await;
+
+    assert_eq!(h.captures(), 1);
+    // No prewarm for the follow-up: the server already has the prefix.
+    assert_eq!(
+        layouts(&h.requests()),
+        [
+            vec!["U:img1".to_owned()],
+            vec!["U:img1+q1".to_owned()],
+            vec!["U:img1+q1".to_owned(), a(ANSWER), "U:q2".to_owned()],
+        ]
+    );
+    let [report] = reports(&updates).try_into().unwrap();
+    assert_eq!(report.outcome, Outcome::Answered);
+    assert_eq!(report.fresh_image, Some(false));
+    assert_eq!(report.history, Some(1));
+    assert_eq!(report.capture, None);
+    assert!(report.to_string().contains("image=reused history=1"));
+    assert_eq!(sessions(&updates).last().unwrap().questions, 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn look_captures_afresh_and_the_old_image_becomes_a_placeholder() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2", "q3"],
+        ..Default::default()
+    });
+    h.ask(Chord::Talk).await;
+    h.ask(Chord::Look).await;
+    h.ask(Chord::Talk).await;
+
+    assert_eq!(h.captures(), 2);
+    let requests = layouts(&h.requests());
+    assert_eq!(requests.len(), 5, "{requests:?}");
+    // The look's prewarm: history with the placeholder, then the new image.
+    assert_eq!(
+        requests[2],
+        ["U:earlier+q1".to_owned(), a(ANSWER), "U:img2".to_owned()]
+    );
+    assert_eq!(
+        requests[3],
+        ["U:earlier+q1".to_owned(), a(ANSWER), "U:img2+q2".to_owned()]
+    );
+    // The follow-up after the look is about the new screenshot.
+    assert_eq!(
+        requests[4],
+        [
+            "U:earlier+q1".to_owned(),
+            a(ANSWER),
+            "U:img2+q2".to_owned(),
+            a(ANSWER),
+            "U:q3".to_owned()
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_look_leaves_the_session_as_it_was() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "", "q3"],
+        ..Default::default()
+    });
+    h.ask(Chord::Talk).await;
+    let failed = h.ask(Chord::Look).await;
+    assert_eq!(
+        reports(&failed)[0].outcome,
+        Outcome::Failed(TurnError::NoSpeech)
+    );
+    assert!(sessions(&failed).is_empty());
+    h.ask(Chord::Talk).await;
+
+    let last = h.questions().last().unwrap().layout.clone();
+    assert_eq!(last, ["U:img1+q1".to_owned(), a(ANSWER), "U:q3".to_owned()]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_session_expires_after_the_idle_timeout() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2"],
+        config: TurnConfig {
+            min_press: Duration::from_millis(100),
+            session_idle: Duration::from_millis(300),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    h.ask(Chord::Talk).await;
+    let expired = h.until(|u| matches!(u, Update::Session(_))).await;
+    assert_eq!(
+        sessions(&expired),
+        [SessionInfo {
+            questions: 0,
+            screenshot_taken: None
+        }]
+    );
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.captures(), 2);
+    assert_eq!(h.questions().last().unwrap().layout, ["U:img2+q2"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_session_cancels_the_turn_and_forgets_the_screenshot() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2"],
+        tts_hangs: true,
+        ..Default::default()
+    });
+    h.hold(Chord::Talk, 150).await;
+    h.until(|u| matches!(u, Update::State(TurnState::Speaking)))
+        .await;
+
+    h.controller.new_session();
+    let updates = h.until(|u| matches!(u, Update::Session(_))).await;
+    assert_eq!(reports(&updates)[0].outcome, Outcome::Cancelled);
+    assert_eq!(sessions(&updates)[0].questions, 0);
+
+    // The cancelled turn was never committed, so the next one captures.
+    h.hold(Chord::Talk, 150).await;
+    h.until(|u| matches!(u, Update::State(TurnState::Speaking)))
+        .await;
+    assert_eq!(h.captures(), 2);
+    assert_eq!(h.questions().last().unwrap().layout, ["U:img2+q2"]);
 }
