@@ -62,6 +62,10 @@ pub struct Args {
     /// Run DEEP without its built-in MTP draft (speculative decoding).
     #[arg(long)]
     no_mtp: bool,
+    /// Extra llama-server flag for DEEP (repeatable), e.g.
+    /// --deep-arg=--checkpoint-min-step --deep-arg=64.
+    #[arg(long = "deep-arg", allow_hyphen_values = true)]
+    deep_args: Vec<String>,
     /// Only the first N hard questions.
     #[arg(long)]
     limit: Option<usize>,
@@ -148,11 +152,15 @@ pub async fn run(args: Args) -> Result<()> {
     }
 
     // Both servers at once, as the app runs them.
-    let mtp = if args.no_mtp {
+    let mut mtp = if args.no_mtp {
         Vec::new()
     } else {
         vec!["--spec-type".into(), "draft-mtp".into()]
     };
+    mtp.extend(args.deep_args.iter().cloned());
+    if !args.deep_args.is_empty() {
+        println!("DEEP extra flags: {}", args.deep_args.join(" "));
+    }
     let started = Instant::now();
     let (fast, deep) = tokio::try_join!(
         start_server(&args.fast, 8192, Vec::new()),
