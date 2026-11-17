@@ -1,7 +1,8 @@
 # glance — design
 
-Status: approved design for v1, written 2026-11-16. M0 (CLI spike) is done and its
-measurements are recorded in §4, §5, §6.4, §7.2, §12 and §13. Read together with
+Status: approved design for v1, written 2026-11-16. M0 and M1 are done; M2 is in
+progress (see §14). Measurements are recorded in §4, §5, §6, §7.2, §12 and §13;
+the running status and what is left are in `docs/PROGRESS.md`. Read together with
 `CLAUDE.md`, whose security and privacy rules take precedence over anything here.
 
 Crate versions and model file sizes were read from docs.rs, Hugging Face, and
@@ -28,7 +29,12 @@ Deviations from the brief:
   bans (§5).
 - **Two extra crates** beyond the seven listed: `models` and `xtask` (§2).
 - **TTS starts with the macOS system voice**, so later milestones do not depend on
-  Kokoro landing (§6).
+  Kokoro landing (§6). **Kokoro is parked** (decided 2026-11-17): M2–M4 use the
+  system voice; Kokoro is revisited after M4, or sooner if voice quality is a
+  real problem (§6.3).
+- **Builds target macOS 14.2** (`MACOSX_DEPLOYMENT_TARGET` in
+  `.cargo/config.toml`), and `crates/capture/build.rs` lets the ScreenCaptureKit
+  Swift bridge link with only the Command Line Tools installed (no full Xcode).
 - **M2 includes a minimal tray icon** (status + Quit). A Dock-less app needs a way
   to quit and show state; overlay and settings still wait for M5.
 - **ONNX Runtime comes from the `ort` crate's checksum-verified download.**
@@ -245,7 +251,15 @@ blocked on Kokoro. It remains afterwards as the fallback when the Kokoro model i
 not installed. The delegate callbacks need a running main-thread run loop, which
 the app has from M2; the M1 CLI runs one for the duration of the reply.
 
-### 6.3 Kokoro-82M v1.0 on `ort` (M1, second half)
+### 6.3 Kokoro-82M v1.0 on `ort` (parked after the M1 spike)
+
+**Status: parked.** The time-boxed spike passed all three checks (results and
+the remaining work are in `docs/PROGRESS.md`; the spike code is in
+`spikes/kokoro-g2p`), but Kokoro would add roughly 250–450 ms before the first
+sentence sounds: fp32 synthesis at 10 threads measured 230–804 ms per sentence
+(median 456 ms; q8f16 was 3x slower), against 36–60 ms for the system voice to
+start. The model, tokenizer and five voices are pinned in `models.toml`. The
+plan below stands for when it is picked up again.
 
 - Source: `onnx-community/Kokoro-82M-v1.0-ONNX` (Apache-2.0). Benchmark
   `model.onnx` (326 MB fp32), `model_fp16.onnx` (163 MB), `model_q8f16.onnx`
@@ -607,11 +621,13 @@ end-to-end run is `glance spike` (see README).
 | STT accuracy on a real voice in a real room (M0 used synthetic speech) | first spoken `glance spike` run |
 | Whether the 8B reads real screens better than the 4B (synthetic set hit the ceiling) | real use; rerun `glance bench` with harder screens |
 | Chat endpoint accepts `grammar` with `stream: true`; streamed `reasoning_content` field | M0 / M4 |
-| AVSpeechSynthesizer via objc2 bindings: delegate callbacks, run loop in a CLI | M1 |
-| misaki-rs phonemes match Kokoro's vocab; quality of the no-espeak fallback | M1 time-boxed spike |
+| AVSpeechSynthesizer via objc2 bindings: delegate callbacks, run loop in a CLI | **Settled in M1: works; callbacks arrive only on the main thread's run loop**, so the main thread must keep it turning (§6.2) |
+| misaki-rs phonemes match Kokoro's vocab; quality of the no-espeak fallback | **Settled in M1: yes, with an in-house fallback for unknown words** (§6.3) |
+| System-voice quality is good enough for daily use (all M1 tests ran at volume 0) | maintainer listening test |
 | A chord claimed by a macOS system shortcut may register without error yet never fire | M2 |
 | Permission grants persist across rebuilds with a stable signing identity | M2 |
-| ScreenCaptureKit crate's exact filter API for excluding glance's own windows | M2 |
+| ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`** (code done; not yet run on a real screen) |
+| `cargo deny` advisory RUSTSEC-2026-0542 (`humantime` unmaintained, via `transcribe-rs`) | maintainer decision: ignore with reason, or replace the dependency |
 | Vision support of models served through Ollama/LM Studio endpoints | M4 |
 | egui overlay stays non-activating without a shim | M5 |
 
@@ -629,14 +645,34 @@ end-to-end run is `glance spike` (see README).
   3. FAST bake-off report.
   Deliverable: `glance spike --png shot.png` records 5 s, transcribes, asks
   llama-server, prints the reply and per-stage times.
-- **M1, speech out**: `TextToSpeech` + `SentenceChunker` with the system-voice
-  implementation; the reply is spoken sentence by sentence and TTFA is reported.
-  Then the time-boxed phonemizer spike (§6.3) and, if it passes, the Kokoro
-  implementation.
-- **M2**: `Glance.app` with hotkeys, live capture, tray status, permission
-  checklist. Acceptance includes: both chords register at startup, a registration
-  failure produces a visible error naming the chord, a physical press and release
-  of each chord is observed end to end, and grants survive two rebuilds.
+- **M1, speech out** (done): `TextToSpeech` + `SentenceChunker` with the
+  system-voice implementation; the reply is spoken sentence by sentence and TTFA
+  is reported (354–546 ms key-up to first sound). The phonemizer spike passed;
+  the Kokoro implementation is parked (§6.3).
+- **M2** (in progress): `Glance.app` with hotkeys, live capture, tray status,
+  permission checklist. Done: live capture of the active display
+  (`crates/capture/src/live.rs`). Left, in order:
+  1. Orchestrator turn state machine (`crates/orchestrator`): press starts the
+     mic and capture + prewarm, release transcribes, asks FAST and speaks;
+     a press during a turn cancels it; presses under 250 ms only cancel;
+     recordings cap at 60 s; one latency log line per turn. Tested with mocks.
+  2. `glance app`: `NSApplication` run loop with the Accessory policy (no Dock
+     icon; the same loop delivers speech callbacks), `global-hotkey`
+     registration of both chords, `tray-icon` status and menu (status line,
+     permissions checklist with System Settings links, Quit), tray updates
+     posted to the main thread with `dispatch2`.
+  3. Permission helpers: Screen Recording preflight and request
+     (CoreGraphics), microphone status (`AVCaptureDevice`).
+  4. `cargo xtask bundle`: `Glance.app` with bundle ID
+     `io.github.matty-pw.glance`, `LSUIElement`, usage strings, audio-input
+     entitlement, hardened runtime, signed with `GLANCE_SIGN_IDENTITY`
+     (ad-hoc with a warning when unset); print the designated requirement.
+  5. `glance capture-check`: one live capture, printing only size and timing.
+  Until M5's settings, the app takes its endpoint as launch arguments
+  (`open Glance.app --args app --endpoint ...`). Acceptance includes: both
+  chords register at startup, a registration failure produces a visible error
+  naming the chord, a physical press and release of each chord is observed end
+  to end, and grants survive two rebuilds (the last two need the maintainer).
 - **M3**: follow-ups on the same screenshot, `look` hotkey, session expiry.
 - **M4**: escalation, managed llama-server pair, DEEP bake-off report.
 - **M5**: settings, overlay, Keychain, model manifest management.
