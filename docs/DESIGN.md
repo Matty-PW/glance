@@ -415,6 +415,35 @@ on this machine: key-up to DEEP's first word was 50 s median at
 of ~5 s. Its hybrid architecture also defeats the image prewarm in §4 (prompt
 re-evaluated every time). Numbers and causes: `docs/PROGRESS.md`.
 
+### 7.4 Presets by RAM (design note, not built)
+
+Decided 2026-11-18: the default is one small model, FAST only; DEEP is
+optional and loaded on demand. A preset would pick FAST, context, voice and
+whether DEEP may be loaded, from the machine's RAM. Rule proposed here:
+glance's total (llama-server(s) + the glance process) stays at or under
+about 45% of RAM in normal use, so macOS and the apps being looked at keep
+the rest; while DEEP is loaded on demand, up to about 60%, and it unloads
+after an idle time.
+
+Measured inputs (M4 Pro, `glance fast-bench`, `glance deep-bench`,
+resident memory with context allocated): glance process with Parakeet and
+Kokoro fp32 1.74 GB; Qwen3-VL-4B at ctx 8192 5.3 GB; Qwen3-VL-8B at ctx 8192
+8.1 GB; Qwen3.8-27B at ctx 16384 19.4 GB.
+
+| RAM | 45% budget | FAST | Context | Voice | DEEP | glance total |
+|---|---|---|---|---|---|---|
+| 8 GB | 3.6 GB | a ~2B vision model (not yet pinned or measured) | 4096 | system voice | not offered | ~3–3.5 GB, estimate to measure |
+| 16 GB | 7.2 GB | Qwen3-VL-4B | 8192 | Kokoro fp32 | not offered | 7.0 GB measured |
+| 32 GB | 14.4 GB | Qwen3-VL-4B (8B as an option) | 8192 | Kokoro fp32 | not offered (4B + 27B is 26.4 GB, over 60% of 32 GB) | 7.0 GB (9.8 GB with 8B) |
+| 48 GB+ | 21.6 GB | Qwen3-VL-4B | 8192 | Kokoro fp32 | Qwen3.8-27B on demand, unloaded when idle | 7.0 GB idle, 26.4 GB with DEEP loaded (55% of 48 GB) |
+
+Open before presets are built: pick and measure an 8 GB FAST model (LFM2.5-VL
+is the smallest pinned one but re-reads the image every question, §4);
+measure glance's own memory with the system voice instead of Kokoro, and
+llama-server at ctx 4096; decide whether presets are chosen automatically
+(`sysctl hw.memsize`) or offered as a first-run choice. Config resolves as
+built-in defaults, then the preset, then the user's file (§7.1).
+
 ### 7.3 Escalation schema
 
 FAST either answers in plain speech, or outputs exactly one JSON object and nothing

@@ -88,8 +88,17 @@ pub fn run(args: Args) -> Result<()> {
             },
         },
     };
+    let deep_configured = models.deep_endpoint.is_some() || models.deep.is_some();
+    if deep_configured && !models.auto_escalate && !args.no_deep {
+        // Default: one small model. DEEP on demand ("think harder", its own
+        // hotkey) is not built yet, so without auto_escalate it stays off.
+        eprintln!(
+            "glance: DEEP is configured but auto_escalate is off; running FAST only \
+             (DEEP on demand is not built yet)"
+        );
+    }
     let deep = match (&models.deep_endpoint, &models.deep) {
-        _ if args.no_deep => None,
+        _ if args.no_deep || !models.auto_escalate => None,
         (Some(endpoint), _) => Some(Source::External {
             endpoint: endpoint.clone(),
             model: models.deep_model.clone(),

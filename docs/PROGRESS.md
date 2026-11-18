@@ -63,9 +63,15 @@ Done:
   `*_endpoint`); `glance app` runs FAST itself by default; Quit stops the
   servers.
 
+Direction (maintainer, 2026-11-18): the default is one small model (FAST
+only); automatic escalation and DEEP are off by default (`auto_escalate`
+in `[models]`); DEEP becomes on-demand (a "think harder" request or its own
+hotkey) and unloads after an idle time. The MoE download is on hold.
+
 Left:
-1. DEEP: Qwen3.8-27B pinned and benchmarked (below): far too slow. Decide
-   next steps (prefix reuse, thinking budget, image size, or the MoE).
+1. Build DEEP on demand (plan to agree first). Qwen3.8-27B is pinned and
+   tuned: 10 s to the first word with a 128-token thinking cap once its
+   image is prewarmed (below).
 2. A `glance bench` mode for escalated turns (filler and DEEP timings,
    format compliance with and without the grammar).
 3. Measure whether DEEP's background prewarm slows FAST (DESIGN §4).
@@ -117,6 +123,24 @@ itself), so DEEP stays at 2048 px. Consequence: a question escalated right
 after a new `look` waits ~25 s more; follow-ups on the same screenshot do not.
 
 Defaults now: medium effort, 128-token thinking cap, MTP on, 2048 px.
+
+**FAST-only comparison, 4B vs 8B (`glance fast-bench`, 2026-11-18).** The
+default setup (one small model, no DEEP). 6 ordinary + 6 hard eval
+questions, each asked fresh (new image prewarmed at key-down, key held 3 s)
+and warm (follow-up on the same screenshot); first word = key-up to the first
+sentence sounding through Kokoro (volume 0), including 0.12 s STT. Context
+8192. Medians / max over 12 per condition:
+
+| Model | llama-server resident | + glance (STT + Kokoro, 1.74 GB) | Fresh first word | Warm first word | Image prewarm | Speed | Ordinary correct | Hard answer length |
+|---|---|---|---|---|---|---|---|---|
+| Qwen3-VL-4B | 5.3 GB | 7.0 GB | 1.23 / 1.70 s | 0.95 / 1.49 s | 1.36 s | 76 tok/s | 12/12 | 63 words |
+| Qwen3-VL-8B | 8.1 GB | 9.8 GB | 1.07 / 1.67 s | 1.14 / 1.96 s | 2.29 s | 46 tok/s | 12/12 | 35 words |
+
+Both prewarms finish inside the 3 s hold, so "fresh" costs no more than
+"warm"; a question shorter than the prewarm waits for the rest of it (4B
+1.4 s, 8B 2.3 s from key-down). First-word times are close because Kokoro
+(0.47–0.60 s) and the first sentence's length dominate. No answer hit the
+200-token cap. Answers side by side: `eval-local/results/fast-compare.md`.
 
 ## What is measured
 

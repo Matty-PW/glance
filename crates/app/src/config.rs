@@ -16,7 +16,8 @@
 //!
 //! [models]
 //! fast = "qwen3-vl-4b-instruct-q4km"  # a vision model from models.toml; glance runs it
-//! deep = "…"                          # optional: FAST can hand hard questions to it
+//! deep = "…"                          # optional second, larger model (DEEP)
+//! auto_escalate = false               # let FAST hand hard questions to DEEP by itself
 //! # Or use servers you run yourself (loopback only); these override fast/deep:
 //! # fast_endpoint = "http://127.0.0.1:8080/v1"
 //! # fast_model = "default"
@@ -57,6 +58,9 @@ pub struct ModelsConfig {
     pub deep_effort: String,
     pub deep_thinking_budget: Option<u32>,
     pub deep_mtp: bool,
+    /// FAST may escalate to DEEP on its own. Off by default: the default
+    /// setup is one small model.
+    pub auto_escalate: bool,
 }
 
 impl ModelsConfig {
@@ -104,6 +108,7 @@ impl Default for ModelsConfig {
             // the first word; 256 took ~16 s; off was fastest but wrong once.
             deep_thinking_budget: Some(128),
             deep_mtp: true,
+            auto_escalate: false,
         }
     }
 }
@@ -260,6 +265,7 @@ mod tests {
         let config = Config::parse("").unwrap();
         assert_eq!(config.models.fast, "qwen3-vl-4b-instruct-q4km");
         assert!(config.models.deep.is_none() && config.models.fast_endpoint.is_none());
+        assert!(!config.models.auto_escalate);
         let config = Config::parse(
             "[models]\ndeep_endpoint = \"http://127.0.0.1:8081/v1\"\ndeep_ctx = 32768\n",
         )
