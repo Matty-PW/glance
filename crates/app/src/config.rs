@@ -18,6 +18,7 @@
 //! fast = "qwen3-vl-4b-instruct-q4km"  # a vision model from models.toml; glance runs it
 //! deep = "…"                          # optional second, larger model (DEEP)
 //! auto_escalate = false               # let FAST hand hard questions to DEEP by itself
+//! deep_idle_secs = 600                # unload an on-demand DEEP after this long unused
 //! # Or use servers you run yourself (loopback only); these override fast/deep:
 //! # fast_endpoint = "http://127.0.0.1:8080/v1"
 //! # fast_model = "default"
@@ -28,6 +29,12 @@
 //! deep_effort = "medium"        # Qwen3.8 reasoning effort: low, medium, xhigh, or off
 //! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only)
 //! deep_mtp = true               # speculative decoding with the model's MTP layers
+//!
+//! [hotkeys]                     # modifiers Ctrl, Opt, Shift, Cmd, then one key
+//! talk = "Ctrl+Opt+G"           # ask about the screenshot
+//! look = "Ctrl+Opt+Shift+G"     # take a fresh look and ask
+//! think = "Ctrl+Opt+T"          # tap: think harder about the last question;
+//!                               # hold and speak: ask DEEP something new
 //! ```
 
 use std::path::PathBuf;
@@ -41,6 +48,25 @@ use serde::Deserialize;
 pub struct Config {
     pub speech: SpeechConfig,
     pub models: ModelsConfig,
+    pub hotkeys: HotkeysConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct HotkeysConfig {
+    pub talk: String,
+    pub look: String,
+    pub think: String,
+}
+
+impl Default for HotkeysConfig {
+    fn default() -> Self {
+        Self {
+            talk: "Ctrl+Opt+G".into(),
+            look: "Ctrl+Opt+Shift+G".into(),
+            think: "Ctrl+Opt+T".into(),
+        }
+    }
 }
 
 /// Where FAST and DEEP run (`docs/DESIGN.md` §7.1).
@@ -61,6 +87,8 @@ pub struct ModelsConfig {
     /// FAST may escalate to DEEP on its own. Off by default: the default
     /// setup is one small model.
     pub auto_escalate: bool,
+    /// Unload an on-demand DEEP after this many seconds unused.
+    pub deep_idle_secs: u64,
 }
 
 impl ModelsConfig {
@@ -109,6 +137,7 @@ impl Default for ModelsConfig {
             deep_thinking_budget: Some(128),
             deep_mtp: true,
             auto_escalate: false,
+            deep_idle_secs: 600,
         }
     }
 }
@@ -266,6 +295,9 @@ mod tests {
         assert_eq!(config.models.fast, "qwen3-vl-4b-instruct-q4km");
         assert!(config.models.deep.is_none() && config.models.fast_endpoint.is_none());
         assert!(!config.models.auto_escalate);
+        assert_eq!(config.hotkeys.think, "Ctrl+Opt+T");
+        assert!(Config::parse("[hotkeys]\nthink = \"Ctrl+Opt+Y\"\n").is_ok());
+        assert!(Config::parse("[hotkeys]\nthunk = \"x\"\n").is_err());
         let config = Config::parse(
             "[models]\ndeep_endpoint = \"http://127.0.0.1:8081/v1\"\ndeep_ctx = 32768\n",
         )

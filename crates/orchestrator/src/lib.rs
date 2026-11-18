@@ -75,13 +75,15 @@ The question needs care: work it out, then answer out loud in two or three short
 the conclusion first; the user will ask if they want more. \
 No markdown, no lists, no code blocks; say numbers and code in words a listener can follow.";
 
-/// The two push-to-talk chords (`docs/DESIGN.md` §4): `Talk` asks about the
+/// The push-to-talk chords (`docs/DESIGN.md` §4): `Talk` asks about the
 /// session's screenshot (capturing one if there is none), `Look` always
-/// captures a fresh one.
+/// captures a fresh one, `Think` asks DEEP: a tap re-asks the last question,
+/// holding it and speaking asks a new one, both on the same screenshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Chord {
     Talk,
     Look,
+    Think,
 }
 
 impl Chord {
@@ -89,8 +91,58 @@ impl Chord {
         match self {
             Chord::Talk => "talk",
             Chord::Look => "look",
+            Chord::Think => "think",
         }
     }
+}
+
+/// What [`DeepTier::load`] returns.
+pub type LoadFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Arc<dyn ChatModel>, String>> + Send + 'a>>;
+
+/// DEEP, loaded on demand. The app implements it with a managed
+/// llama-server it starts and stops; [`Resident`] wraps a model that is
+/// always there (an external endpoint).
+pub trait DeepTier: Send + Sync {
+    /// The model if it is loaded now.
+    fn loaded(&self) -> Option<Arc<dyn ChatModel>>;
+    /// Load it (may take tens of seconds) and return it.
+    fn load(&self) -> LoadFuture<'_>;
+    /// Free its memory. Loading again later is allowed.
+    fn unload(&self);
+}
+
+/// A DEEP that is always loaded and never unloaded.
+pub struct Resident(pub Arc<dyn ChatModel>);
+
+impl DeepTier for Resident {
+    fn loaded(&self) -> Option<Arc<dyn ChatModel>> {
+        Some(Arc::clone(&self.0))
+    }
+
+    fn load(&self) -> LoadFuture<'_> {
+        let model = Arc::clone(&self.0);
+        Box::pin(async move { Ok(model) })
+    }
+
+    fn unload(&self) {}
+}
+
+/// Whether DEEP is in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeepStatus {
+    NotLoaded,
+    Loading,
+    Loaded,
+}
+
+/// What a "think harder" turn is doing, for the tray and (M5) the overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    LoadingDeep,
+    /// DEEP is processing the screenshot.
+    ReadingScreen,
+    ThinkingHarder,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +186,10 @@ pub enum Update {
     Report(Box<TurnReport>),
     /// The session changed: a turn was added, or it ended.
     Session(SessionInfo),
+    /// The current turn's DEEP stage (no content).
+    Progress(Progress),
+    /// DEEP was loaded or unloaded.
+    Deep(DeepStatus),
 }
 
 /// Per-turn settings.
@@ -166,9 +222,19 @@ pub struct TurnConfig {
     pub deep_max_edge: u32,
     /// DEEP's budget, thinking included.
     pub deep_max_tokens: u32,
-    /// Send DEEP the image in the background after FAST's prewarm.
+    /// Send DEEP the image in the background after FAST's prewarm (when
+    /// DEEP is loaded).
     pub deep_prewarm: bool,
     pub deep_extra_body: Map<String, Value>,
+    /// FAST may hand questions to DEEP by itself. Off by default.
+    pub auto_escalate: bool,
+    /// Saying this asks DEEP ("think harder"); matched case-insensitively.
+    pub think_phrase: String,
+    /// Unload an on-demand DEEP after this long unused.
+    pub deep_idle: Duration,
+    /// While DEEP is working and nothing is being said, say "Still
+    /// thinking" this often.
+    pub deep_nudge: Duration,
 }
 
 impl Default for TurnConfig {
@@ -194,6 +260,10 @@ impl Default for TurnConfig {
             deep_max_tokens: 2048,
             deep_prewarm: true,
             deep_extra_body: extra_body,
+            auto_escalate: false,
+            think_phrase: "think harder".into(),
+            deep_idle: Duration::from_secs(10 * 60),
+            deep_nudge: Duration::from_secs(12),
         }
     }
 }
@@ -205,8 +275,9 @@ pub struct Parts {
     pub stt: Box<dyn SpeechToText>,
     /// FAST.
     pub chat: Arc<dyn ChatModel>,
-    /// DEEP, if configured: FAST can then escalate to it.
-    pub deep: Option<Arc<dyn ChatModel>>,
+    /// DEEP, if configured: asked by "think harder", and by FAST itself
+    /// when `auto_escalate` is on.
+    pub deep: Option<Arc<dyn DeepTier>>,
     pub tts: Arc<dyn TextToSpeech>,
     /// The event channel handed out with `tts`.
     pub speech_events: UnboundedReceiver<SpeechEvent>,
@@ -239,6 +310,8 @@ pub struct Orchestrator {
     control_rx: Option<UnboundedReceiver<Control>>,
     session: Session,
     next_turn: u64,
+    /// When DEEP was last used; it unloads `deep_idle` after.
+    deep_last_used: Option<Instant>,
 }
 
 /// Turn bookkeeping inside [`Orchestrator::run`].
@@ -261,6 +334,7 @@ struct Listening {
     prepare: turn::AbortOnDrop<Result<turn::Prepared, TurnError>>,
     history: Vec<Message>,
     deep_history: Vec<Message>,
+    reask: Option<turn::Reask>,
 }
 
 impl Orchestrator {
@@ -269,7 +343,7 @@ impl Orchestrator {
     pub fn new(parts: Parts, config: TurnConfig) -> (Self, UnboundedReceiver<Update>) {
         let (updates, receiver) = mpsc::unbounded_channel();
         let (control_tx, control_rx) = mpsc::unbounded_channel();
-        let shared = Arc::new(Shared::new(parts, config));
+        let shared = Arc::new(Shared::new(parts, config, updates.clone()));
         (
             Self {
                 shared,
@@ -278,6 +352,7 @@ impl Orchestrator {
                 control_rx: Some(control_rx),
                 session: Session::default(),
                 next_turn: 1,
+                deep_last_used: None,
             },
             receiver,
         )
@@ -307,6 +382,12 @@ impl Orchestrator {
             };
             let expiry = (matches!(phase, Phase::Idle) && !self.session.is_empty())
                 .then(|| idle_since + self.shared.config.session_idle);
+            let deep_unload = match (&phase, self.deep_last_used) {
+                (Phase::Idle, Some(used)) if !self.shared.config.auto_escalate => {
+                    Some(used + self.shared.config.deep_idle)
+                }
+                _ => None,
+            };
             let was_busy = !matches!(phase, Phase::Idle);
             tokio::select! {
                 event = hotkeys.next_event() => match event {
@@ -336,6 +417,15 @@ impl Orchestrator {
                     }
                 }
                 () = sleep_until(expiry) => self.end_session(),
+                () = sleep_until(deep_unload) => {
+                    self.deep_last_used = None;
+                    if let Some(deep) = &self.shared.deep
+                        && deep.loaded().is_some()
+                    {
+                        deep.unload();
+                        let _ = self.updates.send(Update::Deep(DeepStatus::NotLoaded));
+                    }
+                }
             }
             if was_busy || !matches!(phase, Phase::Idle) {
                 idle_since = Instant::now();
@@ -365,16 +455,23 @@ impl Orchestrator {
         self.shared.tts.warm_up();
         let capture = chord == Chord::Look || !self.session.has_screenshot();
         let history = self.session.history(capture, Tier::Fast);
-        let deep_history = if self.shared.deep.is_some() {
-            self.session.history(capture, Tier::Deep)
+        let (deep_history, reask) = if self.shared.deep.is_some() {
+            (
+                self.session.history(capture, Tier::Deep),
+                self.session
+                    .reask(Tier::Deep)
+                    .map(|(question, history)| turn::Reask { question, history }),
+            )
         } else {
-            Vec::new()
+            (Vec::new(), None)
         };
         let prepare = turn::AbortOnDrop(tokio::spawn(turn::prepare(
             Arc::clone(&self.shared),
             history.clone(),
             deep_history.clone(),
             capture,
+            // A "think harder" press goes to DEEP; FAST needs no prewarm.
+            chord != Chord::Think,
         )));
         self.state(TurnState::Listening);
         Phase::Listening(Listening {
@@ -385,13 +482,16 @@ impl Orchestrator {
             prepare,
             history,
             deep_history,
+            reask,
         })
     }
 
     fn finish_listening(&mut self, l: Listening, internal: &UnboundedSender<Internal>) -> Phase {
         let key_up = Instant::now();
         let held = key_up - l.pressed_at;
-        if held < self.shared.config.min_press {
+        // A tap on the think chord re-asks; on the others it only cancels.
+        let tap = held < self.shared.config.min_press;
+        if tap && l.chord != Chord::Think {
             // Too short to be a question: the press only cancelled.
             drop(self.shared.mic.stop());
             let mut report = TurnReport::new(l.turn, l.chord, Outcome::ShortPress);
@@ -414,6 +514,8 @@ impl Orchestrator {
                 prepare: l.prepare,
                 history: l.history,
                 deep_history: l.deep_history,
+                tap,
+                reask: l.reask,
             },
             internal.clone(),
         ));
@@ -435,7 +537,14 @@ impl Orchestrator {
                 self.state(state);
                 phase
             }
+            Internal::Progress(turn, progress) if turn == current => {
+                let _ = self.updates.send(Update::Progress(progress));
+                phase
+            }
             Internal::Done(report, commit) if report.turn == current => {
+                if report.think.is_some() || report.escalation.is_some() {
+                    self.deep_last_used = Some(Instant::now());
+                }
                 self.report(*report);
                 if let Some(commit) = commit {
                     self.session

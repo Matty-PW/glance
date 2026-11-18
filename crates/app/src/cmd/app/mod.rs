@@ -20,8 +20,10 @@ use anyhow::{Context, Result};
 use dispatch2::DispatchQueue;
 use glance_audio::Microphone;
 use glance_capture::live::{LiveScreen, request_screen_recording, screen_recording_granted};
+use glance_llm_client::{Endpoint, OpenAiClient};
 use glance_orchestrator::{
-    Controller, Orchestrator, Outcome, Parts, TurnConfig, TurnReport, TurnState, Update,
+    Controller, DeepStatus, DeepTier, Orchestrator, Outcome, Parts, Resident, TurnConfig,
+    TurnReport, TurnState, Update,
 };
 use glance_stt::Parakeet;
 use objc2::MainThreadMarker;
@@ -30,7 +32,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::speech::{self, SpeechArgs};
 use super::{find_model, manifest, store};
-use crate::config::{Config, SpeechConfig};
+use crate::config::{Config, ModelsConfig, SpeechConfig};
 use tiers::Source;
 use tray::View;
 
@@ -70,7 +72,8 @@ pub fn run(args: Args) -> Result<()> {
     // Read the config file now, so a mistake in it (or a bad endpoint)
     // stops the launch with a message instead of surfacing later.
     let settings = args.speech.settings()?;
-    let models = Config::load()?.models;
+    let config_file = Config::load()?;
+    let models = config_file.models.clone();
     let fast = match &args.endpoint {
         Some(endpoint) => Source::External {
             endpoint: endpoint.clone(),
@@ -88,17 +91,10 @@ pub fn run(args: Args) -> Result<()> {
             },
         },
     };
-    let deep_configured = models.deep_endpoint.is_some() || models.deep.is_some();
-    if deep_configured && !models.auto_escalate && !args.no_deep {
-        // Default: one small model. DEEP on demand ("think harder", its own
-        // hotkey) is not built yet, so without auto_escalate it stays off.
-        eprintln!(
-            "glance: DEEP is configured but auto_escalate is off; running FAST only \
-             (DEEP on demand is not built yet)"
-        );
-    }
+    // DEEP, if configured, is loaded on demand ("think harder"), or at
+    // start-up with auto_escalate.
     let deep = match (&models.deep_endpoint, &models.deep) {
-        _ if args.no_deep || !models.auto_escalate => None,
+        _ if args.no_deep => None,
         (Some(endpoint), _) => Some(Source::External {
             endpoint: endpoint.clone(),
             model: models.deep_model.clone(),
@@ -124,7 +120,7 @@ pub fn run(args: Args) -> Result<()> {
     // Hotkeys first: if a chord cannot be registered, say which and do not
     // run the pipeline, so glance never sits there without a working chord.
     let (keys, key_events) = unbounded_channel();
-    let registered = hotkeys::register(keys);
+    let registered = hotkeys::register(keys, &config_file.hotkeys);
     let model_line = format!(
         "FAST: {} · DEEP: {}",
         fast.label(),
@@ -138,13 +134,12 @@ pub fn run(args: Args) -> Result<()> {
 
     let _hotkeys = match registered {
         Ok(hotkeys) => {
+            let labels = hotkeys::labels();
             eprintln!(
-                "glance: chords registered: {} (talk), {} (look)",
-                hotkeys::TALK_LABEL,
-                hotkeys::LOOK_LABEL
+                "glance: chords registered: {} (talk), {} (look), {} (think harder)",
+                labels.talk, labels.look, labels.think
             );
-            let deep_kwargs = models.deep_template_kwargs();
-            runtime.spawn(start(args, deep_kwargs, settings, fast, deep, key_events));
+            runtime.spawn(start(args, models, settings, fast, deep, key_events));
             Some(hotkeys)
         }
         Err(message) => {
@@ -170,16 +165,15 @@ pub fn run(args: Args) -> Result<()> {
 /// Load the speech model, build the pipeline, then run turns until exit.
 async fn start(
     args: Args,
-    args_deep_kwargs: serde_json::Value,
+    models: ModelsConfig,
     settings: SpeechConfig,
     fast: Source,
     deep: Option<Source>,
     key_events: UnboundedReceiver<glance_orchestrator::HotkeyEvent>,
 ) {
     show(View::status("Starting the models…"));
-    // The language models load while speech loads.
+    // FAST loads while speech loads; DEEP waits until it is asked for.
     let fast = tokio::spawn(tiers::start(fast));
-    let deep = deep.map(|d| tokio::spawn(tiers::start(d)));
     let stt_id = args.stt.clone();
     let loaded = tokio::task::spawn_blocking(move || -> Result<Parakeet> {
         let manifest = manifest()?;
@@ -209,24 +203,46 @@ async fn start(
         Ok(Err(e)) => return fail(format!("FAST model: {e:#}")),
         Err(e) => return fail(format!("FAST model: {e}")),
     };
-    let deep = match deep {
+    let deep: Option<Arc<dyn DeepTier>> = match deep {
         None => None,
-        Some(task) => match task.await {
-            Ok(Ok(tier)) => Some(tier),
-            // FAST alone still works: its prompt then omits escalation.
-            Ok(Err(e)) => {
-                eprintln!("glance: DEEP model unavailable, continuing without it: {e:#}");
-                None
+        Some(Source::External { endpoint, model }) => {
+            match Endpoint::loopback(&endpoint, model)
+                .map_err(anyhow::Error::from)
+                .and_then(|e| OpenAiClient::new(e).map_err(anyhow::Error::from))
+            {
+                Ok(client) => Some(Arc::new(Resident(Arc::new(client)))),
+                Err(e) => {
+                    eprintln!("glance: DEEP endpoint unusable, continuing without it: {e:#}");
+                    None
+                }
             }
-            Err(e) => {
-                eprintln!("glance: DEEP model unavailable, continuing without it: {e}");
-                None
+        }
+        Some(Source::Managed { id, ctx, args }) => {
+            let deep = tiers::OnDemandDeep::new(id, ctx, args);
+            if models.auto_escalate {
+                // FAST may escalate at any time: load DEEP now.
+                let loading = Arc::clone(&deep);
+                show(View::deep(DeepStatus::Loading));
+                tokio::spawn(async move {
+                    let status = match loading.load().await {
+                        Ok(_) => DeepStatus::Loaded,
+                        Err(e) => {
+                            eprintln!("glance: DEEP did not start: {e}");
+                            DeepStatus::NotLoaded
+                        }
+                    };
+                    show(View::deep(status));
+                });
             }
-        },
+            Some(deep)
+        }
     };
+    if deep.is_some() {
+        show(View::deep(DeepStatus::NotLoaded));
+    }
     let deep_max_edge = TurnConfig::default().deep_max_edge;
     let mut deep_body = TurnConfig::default().deep_extra_body;
-    deep_body.insert("chat_template_kwargs".into(), args_deep_kwargs.clone());
+    deep_body.insert("chat_template_kwargs".into(), models.deep_template_kwargs());
     let capture_edge = if deep.is_some() {
         args.capture_edge.max(deep_max_edge)
     } else {
@@ -237,9 +253,7 @@ async fn start(
         mic: Box::new(Microphone::new(60)),
         stt: Box::new(stt),
         chat: Arc::new(fast.client),
-        deep: deep
-            .as_ref()
-            .map(|d| -> Arc<dyn glance_llm_client::ChatModel> { Arc::new(d.client.clone()) }),
+        deep,
         tts: voice,
         speech_events,
     };
@@ -249,6 +263,8 @@ async fn start(
         prewarm: !args.no_prewarm,
         grammar: fast.grammar,
         deep_extra_body: deep_body,
+        auto_escalate: models.auto_escalate,
+        deep_idle: std::time::Duration::from_secs(models.deep_idle_secs),
         ..Default::default()
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
@@ -293,6 +309,8 @@ async fn forward_updates(mut updates: UnboundedReceiver<Update>) {
                     show(View::turn_failed(error.to_string()));
                 }
             }
+            Update::Progress(progress) => show(View::progress(progress)),
+            Update::Deep(status) => show(View::deep(status)),
             Update::Session(info) => {
                 if info.questions == 0 {
                     eprintln!("glance: session ended");

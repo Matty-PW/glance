@@ -11,11 +11,11 @@ use std::cell::RefCell;
 use dispatch2::DispatchQueue;
 use glance_audio::permission::{MicPermission, microphone_permission};
 use glance_capture::live::screen_recording_granted;
-use glance_orchestrator::{SessionInfo, TurnState};
+use glance_orchestrator::{DeepStatus, Progress, SessionInfo, TurnState};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use super::hotkeys::{LOOK_LABEL, TALK_LABEL};
+use super::hotkeys;
 
 const SCREEN_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
@@ -37,6 +37,9 @@ pub enum View {
     /// The last turn failed; shown beside "Ready" until the next press.
     TurnFailed(String),
     Session(SessionInfo),
+    /// A "think harder" stage; replaced by the next state.
+    Progress(Progress),
+    Deep(DeepStatus),
 }
 
 impl View {
@@ -59,6 +62,14 @@ impl View {
     pub fn session(info: SessionInfo) -> Self {
         View::Session(info)
     }
+
+    pub fn progress(progress: Progress) -> Self {
+        View::Progress(progress)
+    }
+
+    pub fn deep(status: DeepStatus) -> Self {
+        View::Deep(status)
+    }
 }
 
 struct Tray {
@@ -66,6 +77,7 @@ struct Tray {
     status: MenuItem,
     session: MenuItem,
     new_session: MenuItem,
+    deep: MenuItem,
     screen: MenuItem,
     mic: MenuItem,
 }
@@ -79,6 +91,8 @@ struct Ui {
     fatal: bool,
     problem: Option<String>,
     session: Option<SessionInfo>,
+    /// `None`: no DEEP configured.
+    deep: Option<DeepStatus>,
 }
 
 thread_local! {
@@ -90,6 +104,7 @@ thread_local! {
             fatal: false,
             problem: None,
             session: None,
+            deep: None,
         })
     };
 }
@@ -99,6 +114,8 @@ pub fn install(model_line: &str) {
     let status = MenuItem::new("Starting…", false, None);
     let session = MenuItem::new("Session: none", false, None);
     let new_session = MenuItem::with_id(ID_NEW_SESSION, "New session", false, None);
+    let deep = MenuItem::new("DEEP: off (set `deep` in the config file)", false, None);
+    let labels = hotkeys::labels();
     let screen = MenuItem::with_id(ID_SCREEN, "Screen Recording: …", false, None);
     let mic = MenuItem::with_id(ID_MIC, "Microphone: …", false, None);
     let quit = MenuItem::with_id(ID_QUIT, "Quit glance", true, None);
@@ -109,13 +126,22 @@ pub fn install(model_line: &str) {
         &new_session,
         &PredefinedMenuItem::separator(),
         &MenuItem::new(model_line, false, None),
+        &deep,
         &MenuItem::new(
-            format!("Hold {TALK_LABEL}: ask about the screenshot"),
+            format!("Hold {}: ask about the screenshot", labels.talk),
             false,
             None,
         ),
         &MenuItem::new(
-            format!("Hold {LOOK_LABEL}: take a fresh look and ask"),
+            format!("Hold {}: take a fresh look and ask", labels.look),
+            false,
+            None,
+        ),
+        &MenuItem::new(
+            format!(
+                "Tap {}: think harder about the last question; hold: ask DEEP",
+                labels.think
+            ),
             false,
             None,
         ),
@@ -150,6 +176,7 @@ pub fn install(model_line: &str) {
             status,
             session,
             new_session,
+            deep,
             screen,
             mic,
         });
@@ -210,6 +237,16 @@ impl Ui {
                 self.title = "";
             }
             View::TurnFailed(problem) => self.problem = Some(problem),
+            View::Deep(status) => self.deep = Some(status),
+            View::Progress(progress) => {
+                let (status, title) = match progress {
+                    Progress::LoadingDeep => ("Loading the bigger model…", "…"),
+                    Progress::ReadingScreen => ("Reading the screen…", "…"),
+                    Progress::ThinkingHarder => ("Thinking harder…", "…"),
+                };
+                self.status = status.to_owned();
+                self.title = title;
+            }
             View::Session(info) => self.session = Some(info),
             View::State(state) => {
                 if state == TurnState::Listening {
@@ -241,6 +278,13 @@ impl Ui {
     fn render(&self) {
         self.render_session();
         let Some(tray) = &self.tray else { return };
+        if let Some(status) = self.deep {
+            tray.deep.set_text(match status {
+                DeepStatus::NotLoaded => "DEEP: not loaded (loads when asked to think harder)",
+                DeepStatus::Loading => "DEEP: loading…",
+                DeepStatus::Loaded => "DEEP: loaded",
+            });
+        }
         tray.status.set_text(&self.status);
         tray.icon
             .set_title((!self.title.is_empty()).then_some(self.title));
@@ -264,7 +308,7 @@ fn on_menu(id: &str) {
 /// visible (the overlay that shows it arrives in M5).
 fn session_line(session: Option<SessionInfo>) -> String {
     let Some(info) = session.filter(|s| s.questions > 0) else {
-        return format!("Session: none ({TALK_LABEL} starts one)");
+        return format!("Session: none ({} starts one)", hotkeys::labels().talk);
     };
     let questions = match info.questions {
         1 => "1 question".to_owned(),
@@ -327,7 +371,7 @@ mod tests {
     fn session_line_reads_naturally() {
         assert_eq!(
             session_line(None),
-            format!("Session: none ({TALK_LABEL} starts one)")
+            format!("Session: none ({} starts one)", hotkeys::labels().talk)
         );
         let taken = Instant::now() - Duration::from_secs(150);
         let info = SessionInfo {

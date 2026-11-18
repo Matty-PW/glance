@@ -16,8 +16,8 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
 use crate::{
-    Chord, Controller, HotkeyEvent, Orchestrator, Outcome, Parts, SessionInfo, TurnConfig,
-    TurnError, TurnReport, TurnState, Update,
+    Chord, Controller, DeepStatus, DeepTier, HotkeyEvent, LoadFuture, Orchestrator, Outcome, Parts,
+    Progress, SessionInfo, TurnConfig, TurnError, TurnReport, TurnState, Update,
 };
 
 // ---- mocks -----------------------------------------------------------------
@@ -229,12 +229,46 @@ impl TextToSpeech for MockTts {
     }
 }
 
+/// DEEP on demand: counts loads and unloads; loading takes `load_delay`.
+struct MockDeep {
+    chat: Arc<MockChat>,
+    loaded: std::sync::atomic::AtomicBool,
+    loads: AtomicUsize,
+    unloads: AtomicUsize,
+    load_delay: Duration,
+}
+
+impl DeepTier for MockDeep {
+    fn loaded(&self) -> Option<Arc<dyn ChatModel>> {
+        self.loaded
+            .load(Ordering::SeqCst)
+            .then(|| Arc::clone(&self.chat) as Arc<dyn ChatModel>)
+    }
+
+    fn load(&self) -> LoadFuture<'_> {
+        Box::pin(async move {
+            tokio::time::sleep(self.load_delay).await;
+            self.loads.fetch_add(1, Ordering::SeqCst);
+            self.loaded.store(true, Ordering::SeqCst);
+            Ok(Arc::clone(&self.chat) as Arc<dyn ChatModel>)
+        })
+    }
+
+    fn unload(&self) {
+        self.unloads.fetch_add(1, Ordering::SeqCst);
+        self.loaded.store(false, Ordering::SeqCst);
+    }
+}
+
 // ---- harness ---------------------------------------------------------------
 
 struct Setup {
     transcripts: Vec<&'static str>,
     /// DEEP's reply; `None` means no DEEP tier.
     deep: Option<Vec<ChatEvent>>,
+    /// DEEP starts loaded (as with auto-escalation) or not (on demand).
+    deep_loaded: bool,
+    deep_load_delay: Duration,
     reply: Vec<ChatEvent>,
     capture_fails: Option<fn() -> CaptureError>,
     silent_mic: bool,
@@ -248,6 +282,8 @@ impl Default for Setup {
         Self {
             transcripts: vec!["what is this window"],
             deep: None,
+            deep_loaded: false,
+            deep_load_delay: Duration::from_millis(30),
             reply: reply(&["It is a code ", "editor. It shows ", "a Rust file."]),
             capture_fails: None,
             silent_mic: false,
@@ -286,6 +322,7 @@ struct Harness {
     stt_calls: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<SeenRequest>>>,
     deep_requests: Arc<Mutex<Vec<SeenRequest>>>,
+    deep: Option<Arc<MockDeep>>,
     tts: Arc<TtsLog>,
     captures: Arc<AtomicUsize>,
     controller: Controller,
@@ -297,6 +334,20 @@ impl Harness {
         let stt_calls = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let deep_requests = Arc::new(Mutex::new(Vec::new()));
+        let deep = setup.deep.map(|reply| {
+            Arc::new(MockDeep {
+                chat: Arc::new(MockChat {
+                    reply,
+                    seen: Arc::clone(&deep_requests),
+                    images: Mutex::new(Vec::new()),
+                    fail_question: false,
+                }),
+                loaded: std::sync::atomic::AtomicBool::new(setup.deep_loaded),
+                loads: AtomicUsize::new(0),
+                unloads: AtomicUsize::new(0),
+                load_delay: setup.deep_load_delay,
+            })
+        });
         let tts_log = Arc::new(TtsLog::default());
         let captures = Arc::new(AtomicUsize::new(0));
         let (events, speech_events) = mpsc::unbounded_channel();
@@ -319,14 +370,7 @@ impl Harness {
                 images: Mutex::new(Vec::new()),
                 fail_question: setup.chat_fails,
             }),
-            deep: setup.deep.map(|reply| -> Arc<dyn ChatModel> {
-                Arc::new(MockChat {
-                    reply,
-                    seen: Arc::clone(&deep_requests),
-                    images: Mutex::new(Vec::new()),
-                    fail_question: false,
-                })
-            }),
+            deep: deep.clone().map(|d| d as Arc<dyn DeepTier>),
             tts: Arc::new(MockTts {
                 events,
                 next: AtomicU64::new(1),
@@ -348,6 +392,7 @@ impl Harness {
             stt_calls,
             requests,
             deep_requests,
+            deep,
             tts: tts_log,
             captures,
             controller,
@@ -832,13 +877,41 @@ fn signal(reason: &str) -> Vec<ChatEvent> {
     ])
 }
 
+/// Auto-escalation: DEEP loaded at start, FAST offered the escalate option.
 fn with_deep(fast: Vec<ChatEvent>, deep: Vec<ChatEvent>) -> Setup {
     Setup {
         transcripts: vec!["what is the total", "and per month"],
         reply: fast,
         deep: Some(deep),
+        deep_loaded: true,
+        config: TurnConfig {
+            min_press: Duration::from_millis(100),
+            auto_escalate: true,
+            ..Default::default()
+        },
         ..Default::default()
     }
+}
+
+/// DEEP on demand (the default): not loaded until "think harder".
+fn on_demand(transcripts: Vec<&'static str>, deep: Vec<ChatEvent>) -> Setup {
+    Setup {
+        transcripts,
+        reply: reply(&["It is a total row."]),
+        deep: Some(deep),
+        ..Default::default()
+    }
+}
+
+/// DEEP's questions: everything but prewarms and prefills.
+fn deep_questions(h: &Harness) -> Vec<SeenRequest> {
+    h.deep_requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.max_tokens != Some(1))
+        .cloned()
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -869,16 +942,17 @@ async fn an_escalation_speaks_a_filler_then_deeps_answer() {
     // DEEP got its own prewarm and the question, with its larger image
     // (its own copy, so its mock labels it img1).
     let deep = h.deep_requests.lock().unwrap().clone();
-    assert_eq!(
-        layouts(&deep),
-        [
-            vec!["U:img1".to_owned()],
-            vec!["U:img1".to_owned(), "U:what is the total".to_owned()]
-        ]
-    );
-    // The prewarm leaves the assistant turn unopened, so it is a prefix.
-    assert_eq!(deep[0].generation_prompt, Some(false));
-    assert_eq!(deep[1].generation_prompt, None);
+    // Background prewarm and prefill (both the image, no assistant turn
+    // opened, so they are a prefix), then the question.
+    let (warm, questions): (Vec<_>, Vec<_>) = deep.iter().partition(|r| r.max_tokens == Some(1));
+    assert!(!warm.is_empty());
+    for r in &warm {
+        assert_eq!(r.layout, ["U:img1"]);
+        assert_eq!(r.generation_prompt, Some(false));
+    }
+    assert_eq!(questions.len(), 1);
+    assert_eq!(questions[0].layout, ["U:img1", "U:what is the total"]);
+    assert_eq!(questions[0].generation_prompt, None);
     assert!(deep.iter().all(|r| r.system == "deep"));
     // FAST was offered the escalation option, in prewarm and question alike
     // (the same prompt keeps the cached prefix valid).
@@ -897,14 +971,7 @@ async fn deeps_answer_joins_the_session() {
     h.ask(Chord::Talk).await;
     h.ask(Chord::Talk).await;
     // The follow-up (escalated again) carries DEEP's first answer as history.
-    let last = h
-        .deep_requests
-        .lock()
-        .unwrap()
-        .last()
-        .unwrap()
-        .layout
-        .clone();
+    let last = deep_questions(&h).last().unwrap().layout.clone();
     assert_eq!(
         last,
         [
@@ -967,4 +1034,183 @@ async fn a_plain_answer_with_deep_configured_does_not_touch_deep_beyond_the_prew
             .iter()
             .all(|r| r.max_tokens == Some(1))
     );
+}
+
+// ---- think harder, DEEP on demand ------------------------------------------
+
+const DEEP_SAYS: &str = "It is seven.";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_think_tap_re_asks_the_last_question_with_deep_loading_it_first() {
+    let mut h = Harness::new(on_demand(
+        vec!["what is the total", "and per month"],
+        reply(&[DEEP_SAYS]),
+    ));
+    h.ask(Chord::Talk).await;
+    h.hold(Chord::Think, 20).await; // a tap
+    let updates = h.until_idle().await;
+
+    let spoken = h.spoken();
+    assert_eq!(
+        spoken[1..],
+        [
+            "Let me think harder about that.",
+            "Loading the bigger model first.",
+            DEEP_SAYS
+        ]
+    );
+    // DEEP gets the original question and screenshot, not FAST's answer.
+    assert_eq!(
+        deep_questions(&h)[0].layout,
+        ["U:img1", "U:what is the total"]
+    );
+    assert_eq!(deep_questions(&h)[0].system, "deep");
+    let deep = h.deep.as_ref().unwrap();
+    assert_eq!(deep.loads.load(Ordering::SeqCst), 1);
+    // FAST is never offered escalation when it is not opted in.
+    assert!(h.requests().iter().all(|r| r.system == "plain"));
+
+    let [report] = reports(&updates).try_into().unwrap();
+    assert_eq!(report.outcome, Outcome::Answered);
+    assert_eq!(report.think, Some("reask"));
+    assert!(report.deep_load.is_some() && report.deep_prefill.is_some());
+    assert!(report.to_string().contains("think=reask"));
+    let progress: Vec<Progress> = updates
+        .iter()
+        .filter_map(|u| match u {
+            Update::Progress(p) => Some(*p),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        progress,
+        [
+            Progress::LoadingDeep,
+            Progress::ReadingScreen,
+            Progress::ThinkingHarder
+        ]
+    );
+    assert!(
+        updates
+            .iter()
+            .any(|u| matches!(u, Update::Deep(DeepStatus::Loaded)))
+    );
+
+    // DEEP's answer replaced FAST's in the session; no extra exchange.
+    h.ask(Chord::Talk).await;
+    assert_eq!(
+        h.questions().last().unwrap().layout,
+        [
+            "U:img1+what is the total",
+            "A:It is seven.",
+            "U:and per month"
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn think_harder_with_more_words_is_a_new_question_on_the_same_screenshot() {
+    let mut h = Harness::new(on_demand(
+        vec!["what is the total", "Think harder: why is it slow?"],
+        reply(&[DEEP_SAYS]),
+    ));
+    h.ask(Chord::Talk).await;
+    let updates = h.ask(Chord::Talk).await;
+    assert_eq!(h.captures(), 1);
+    assert_eq!(
+        deep_questions(&h)[0].layout,
+        [
+            "U:img1".to_owned(),
+            "U:what is the total".to_owned(),
+            a("It is a total row."),
+            "U:why is it slow?".to_owned()
+        ]
+    );
+    assert_eq!(reports(&updates)[0].think, Some("new"));
+    // Only FAST's first question went to FAST.
+    assert_eq!(h.questions().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn saying_only_think_harder_re_asks() {
+    let mut h = Harness::new(on_demand(
+        vec!["what is the total", "Think harder."],
+        reply(&[DEEP_SAYS]),
+    ));
+    h.ask(Chord::Talk).await;
+    let updates = h.ask(Chord::Talk).await;
+    assert_eq!(reports(&updates)[0].think, Some("reask"));
+    assert_eq!(
+        deep_questions(&h)[0].layout,
+        ["U:img1", "U:what is the total"]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn holding_the_think_chord_and_speaking_asks_deep_directly() {
+    let mut h = Harness::new(on_demand(vec!["why is it slow"], reply(&[DEEP_SAYS])));
+    let updates = h.ask(Chord::Think).await;
+    assert_eq!(reports(&updates)[0].think, Some("new"));
+    // No session yet, so it captured; FAST was not asked at all.
+    assert_eq!(h.captures(), 1);
+    assert!(h.questions().is_empty());
+    assert_eq!(deep_questions(&h)[0].layout, ["U:img1", "U:why is it slow"]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn think_harder_without_deep_says_how_to_set_it_up() {
+    let mut h = Harness::new(Setup::default());
+    h.hold(Chord::Think, 20).await;
+    let updates = h.until_idle().await;
+    assert_eq!(
+        reports(&updates)[0].outcome,
+        Outcome::Failed(TurnError::NoDeep)
+    );
+    assert!(h.spoken()[0].starts_with("Thinking harder isn't set up"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn think_harder_before_any_question_says_so() {
+    let mut h = Harness::new(on_demand(vec!["unused"], reply(&[DEEP_SAYS])));
+    h.hold(Chord::Think, 20).await;
+    let updates = h.until_idle().await;
+    assert_eq!(
+        reports(&updates)[0].outcome,
+        Outcome::Failed(TurnError::NothingToReask)
+    );
+    assert_eq!(h.deep.as_ref().unwrap().loads.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn deep_unloads_after_the_idle_time_and_reloads_when_asked_again() {
+    let mut setup = on_demand(
+        vec!["what is the total", "Think harder."],
+        reply(&[DEEP_SAYS]),
+    );
+    setup.config.deep_idle = Duration::from_millis(300);
+    let mut h = Harness::new(setup);
+    h.ask(Chord::Talk).await;
+    h.hold(Chord::Think, 20).await;
+    h.until_idle().await;
+    h.until(|u| matches!(u, Update::Deep(DeepStatus::NotLoaded)))
+        .await;
+    let deep = h.deep.as_ref().unwrap();
+    assert_eq!(deep.unloads.load(Ordering::SeqCst), 1);
+    h.hold(Chord::Think, 20).await;
+    h.until_idle().await;
+    assert_eq!(h.deep.as_ref().unwrap().loads.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_long_silence_while_deep_works_gets_a_still_thinking() {
+    let mut setup = on_demand(vec!["what is the total"], reply(&[DEEP_SAYS]));
+    setup.deep_load_delay = Duration::from_millis(400);
+    setup.config.deep_nudge = Duration::from_millis(100);
+    let mut h = Harness::new(setup);
+    h.ask(Chord::Talk).await;
+    h.hold(Chord::Think, 20).await;
+    h.until_idle().await;
+    let spoken = h.spoken();
+    assert!(spoken.iter().any(|s| s == "Still thinking."), "{spoken:?}");
+    assert_eq!(spoken.last().unwrap(), DEEP_SAYS);
 }

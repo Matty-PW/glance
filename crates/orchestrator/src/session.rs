@@ -56,6 +56,9 @@ pub(crate) struct Commit {
     pub(crate) answer: String,
     /// The screenshot this turn captured, if it captured one.
     pub(crate) shot: Option<Shot>,
+    /// A "think harder" re-ask: DEEP's answer replaces the last answer
+    /// instead of adding an exchange.
+    pub(crate) replace_last: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,8 +115,26 @@ impl Session {
     /// prompt). `fresh_image`: the new question brings its own screenshot,
     /// so the current one is shown as a placeholder.
     pub(crate) fn history(&self, fresh_image: bool, tier: Tier) -> Vec<Message> {
-        let mut messages = Vec::with_capacity(self.exchanges.len() * 2);
-        for exchange in &self.exchanges {
+        self.render(&self.exchanges, fresh_image, tier)
+    }
+
+    /// For re-asking the last question: that question, and the history
+    /// before it with the screenshot still in it. FAST's answer to it is
+    /// left out, so DEEP answers afresh.
+    pub(crate) fn reask(&self, tier: Tier) -> Option<(String, Vec<Message>)> {
+        let (last, earlier) = self.exchanges.split_last()?;
+        let mut messages = self.render(earlier, false, tier);
+        if last.image == Image::Current
+            && let Some(shot) = &self.shot
+        {
+            messages.push(Message::user(vec![shot.for_tier(tier).clone()]));
+        }
+        Some((last.question.clone(), messages))
+    }
+
+    fn render(&self, exchanges: &[Exchange], fresh_image: bool, tier: Tier) -> Vec<Message> {
+        let mut messages = Vec::with_capacity(exchanges.len() * 2);
+        for exchange in exchanges {
             let mut parts = Vec::with_capacity(2);
             match (exchange.image, &self.shot) {
                 (Image::Current, Some(shot)) if !fresh_image && tier == Tier::Deep => {
@@ -136,6 +157,12 @@ impl Session {
 
     /// Add an answered turn, then drop the oldest exchanges beyond `max`.
     pub(crate) fn commit(&mut self, commit: Commit, max: usize) {
+        if commit.replace_last
+            && let Some(last) = self.exchanges.last_mut()
+        {
+            last.answer = commit.answer;
+            return;
+        }
         let image = match commit.shot {
             Some(shot) => {
                 for exchange in &mut self.exchanges {
@@ -198,6 +225,7 @@ mod tests {
             question: q.into(),
             answer: format!("answer to {q}"),
             shot,
+            replace_last: false,
         }
     }
 
@@ -278,6 +306,35 @@ mod tests {
             ["U:img101", "U:q1", "A:answer to q1"]
         );
         assert_eq!(layout(&s.history(false, Tier::Fast))[0], "U:img1+q1");
+    }
+
+    #[test]
+    fn reask_leaves_out_the_last_answer_but_keeps_the_screenshot() {
+        let mut s = Session::default();
+        assert!(s.reask(Tier::Deep).is_none());
+        s.commit(commit("q1", Some(shot(1))), 12);
+        let (q, history) = s.reask(Tier::Deep).unwrap();
+        assert_eq!(q, "q1");
+        assert_eq!(layout(&history), ["U:img101"]);
+        s.commit(commit("q2", None), 12);
+        let (q, history) = s.reask(Tier::Deep).unwrap();
+        assert_eq!(q, "q2");
+        assert_eq!(layout(&history), ["U:img101", "U:q1", "A:answer to q1"]);
+        // DEEP's answer then replaces FAST's.
+        s.commit(
+            Commit {
+                question: "q2".into(),
+                answer: "deep answer".into(),
+                shot: None,
+                replace_last: true,
+            },
+            12,
+        );
+        assert_eq!(
+            layout(&s.history(false, Tier::Deep)).last().unwrap(),
+            "A:deep answer"
+        );
+        assert_eq!(s.info().questions, 2);
     }
 
     #[test]

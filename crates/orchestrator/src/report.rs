@@ -45,6 +45,12 @@ pub enum TurnError {
     EmptyReply,
     #[error("the fast model's reply started like an escalation but was not a valid one")]
     BadSignal,
+    #[error("\"think harder\" was asked but no DEEP model is configured")]
+    NoDeep,
+    #[error("\"think harder\" was asked before any question")]
+    NothingToReask,
+    #[error("the DEEP model did not start: {0}")]
+    DeepLoad(String),
     #[error("speech output failed: {0}")]
     Speech(String),
     #[error("an internal worker stopped")]
@@ -64,6 +70,9 @@ impl TurnError {
             TurnError::Chat(_) => "chat",
             TurnError::EmptyReply => "empty_reply",
             TurnError::BadSignal => "bad_signal",
+            TurnError::NoDeep => "no_deep",
+            TurnError::NothingToReask => "nothing_to_reask",
+            TurnError::DeepLoad(_) => "deep_load",
             TurnError::Speech(_) => "speech",
             TurnError::WorkerGone => "worker_gone",
         }
@@ -85,6 +94,11 @@ impl TurnError {
             TurnError::Chat(_) => "Sorry, I couldn't reach the model.",
             TurnError::EmptyReply => "Sorry, I don't have an answer for that.",
             TurnError::BadSignal => "Sorry, ask me again.",
+            TurnError::NoDeep => {
+                "Thinking harder isn't set up. Add a deep model in the config file."
+            }
+            TurnError::NothingToReask => "There's no question to think harder about yet.",
+            TurnError::DeepLoad(_) => "Sorry, the bigger model didn't start.",
             TurnError::Speech(_) | TurnError::WorkerGone => return None,
         })
     }
@@ -146,6 +160,14 @@ pub struct TurnReport {
     pub total: Option<Duration>,
     /// Set when FAST handed the question to DEEP.
     pub escalation: Option<Reason>,
+    /// A "think harder" turn: "reask" or "new".
+    pub think: Option<&'static str>,
+    /// Loading DEEP (only when it was not loaded).
+    pub deep_load: Option<Duration>,
+    /// DEEP processing history and image before the question.
+    pub deep_prefill: Option<Duration>,
+    /// DEEP's first thinking token to its first answer token.
+    pub deep_thinking: Option<Duration>,
     /// Key-up to the filler line's first sound.
     pub filler_audio: Option<Duration>,
     /// Key-up to DEEP's first token and first sound.
@@ -180,6 +202,10 @@ impl TurnReport {
             ttfa: None,
             total: None,
             escalation: None,
+            think: None,
+            deep_load: None,
+            deep_prefill: None,
+            deep_thinking: None,
             filler_audio: None,
             deep_ttft: None,
             deep_first_audio: None,
@@ -211,6 +237,9 @@ impl fmt::Display for TurnReport {
         if let Some(reason) = self.escalation {
             write!(f, " escalated={}", reason.as_str())?;
         }
+        if let Some(kind) = self.think {
+            write!(f, " think={kind}")?;
+        }
         let times = [
             ("ttfa_ms", self.ttfa),
             ("held_ms", self.held),
@@ -224,6 +253,9 @@ impl fmt::Display for TurnReport {
             ("ttft_ms", self.ttft),
             ("first_chunk_ms", self.first_chunk),
             ("filler_audio_ms", self.filler_audio),
+            ("deep_load_ms", self.deep_load),
+            ("deep_prefill_ms", self.deep_prefill),
+            ("deep_thinking_ms", self.deep_thinking),
             ("deep_ttft_ms", self.deep_ttft),
             ("deep_audio_ms", self.deep_first_audio),
             ("total_ms", self.total),
