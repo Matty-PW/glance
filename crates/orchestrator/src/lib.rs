@@ -191,6 +191,28 @@ pub enum Update {
     Deep(DeepStatus),
 }
 
+/// Text for the overlay, and nothing else: what the user asked and each
+/// sentence as it starts to sound. It travels on its own channel, apart from
+/// [`Update`], and must never be logged; its `Debug` shows lengths only.
+#[derive(Clone, PartialEq, Eq)]
+pub enum Shown {
+    /// A new turn began: clear the previous question and answer.
+    Clear,
+    Asked(String),
+    /// A sentence (or a fixed cue line) started playing.
+    Said(String),
+}
+
+impl std::fmt::Debug for Shown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Shown::Clear => write!(f, "Clear"),
+            Shown::Asked(t) => write!(f, "Asked({} chars)", t.chars().count()),
+            Shown::Said(t) => write!(f, "Said({} chars)", t.chars().count()),
+        }
+    }
+}
+
 /// What the user sees and acts on: the menu-bar icon, the overlay, the
 /// settings window. A platform crate implements it (`glance-macos`); no UI
 /// toolkit type ever reaches the core crates. Called from any thread.
@@ -201,6 +223,8 @@ pub trait Shell: Send + Sync {
     fn fatal(&self, text: &str);
     /// An orchestrator update.
     fn update(&self, update: &Update);
+    /// Overlay text (never log it).
+    fn display(&self, _shown: &Shown) {}
 }
 
 /// Per-turn settings.
@@ -296,6 +320,8 @@ pub struct Parts {
     pub tts: Arc<dyn TextToSpeech>,
     /// The event channel handed out with `tts`.
     pub speech_events: UnboundedReceiver<SpeechEvent>,
+    /// Where overlay text goes, if anywhere (see [`Shown`]).
+    pub display: Option<UnboundedSender<Shown>>,
 }
 
 enum Control {
@@ -467,6 +493,7 @@ impl Orchestrator {
         self.next_turn += 1;
         let pressed_at = Instant::now();
         let mic_started = self.shared.mic.start();
+        self.shared.show(Shown::Clear);
         // A reply follows soon: let the speech engine open its device now.
         self.shared.tts.warm_up();
         let capture = chord == Chord::Look || !self.session.has_screenshot();

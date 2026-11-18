@@ -26,8 +26,8 @@ use crate::length::{CONTINUE_PROMPT, ends_sentence, is_more};
 use crate::session::{Commit, Shot, Tier};
 use crate::workers::{MicWorker, Reply, SttWorker};
 use crate::{
-    Chord, DeepStatus, DeepTier, Outcome, Parts, Progress, TurnConfig, TurnError, TurnReport,
-    TurnState, Update,
+    Chord, DeepStatus, DeepTier, Outcome, Parts, Progress, Shown, TurnConfig, TurnError,
+    TurnReport, TurnState, Update,
 };
 
 /// Spoken when a "think harder" turn starts; local text only.
@@ -54,6 +54,8 @@ pub(crate) struct Shared {
     pub(crate) deep: Option<Arc<dyn DeepTier>>,
     /// For DEEP's load status, which is not tied to a turn.
     pub(crate) updates: UnboundedSender<Update>,
+    /// Overlay text; never logged.
+    pub(crate) display: Option<UnboundedSender<Shown>>,
     pub(crate) tts: Arc<dyn TextToSpeech>,
     /// Held by whichever turn is speaking. Events carry utterance ids, so a
     /// turn ignores anything left over from a cancelled one.
@@ -70,6 +72,7 @@ impl Shared {
             chat: parts.chat,
             deep: parts.deep,
             updates,
+            display: parts.display,
             tts: parts.tts,
             speech: Mutex::new(parts.speech_events),
             config,
@@ -107,6 +110,12 @@ impl Shared {
 
     fn escalates(&self) -> bool {
         self.config.auto_escalate && self.deep.is_some()
+    }
+
+    pub(crate) fn show(&self, shown: Shown) {
+        if let Some(display) = &self.display {
+            let _ = display.send(shown);
+        }
     }
 
     fn deep_status(&self, status: DeepStatus) {
@@ -498,6 +507,12 @@ async fn run(
         .shot
         .as_ref()
         .map(|shot| shot.for_tier(Tier::Deep).clone());
+    shared.show(Shown::Asked(match &route {
+        Route::Fast(text) | Route::Think(text) | Route::More(text) => text.clone(),
+        Route::Reask => reask
+            .as_ref()
+            .map_or_else(String::new, |r| r.question.clone()),
+    }));
 
     let length = shared.config.response_length;
     let mut speech = shared.speech.lock().await;
@@ -824,6 +839,8 @@ struct Voice<'a> {
     notify: &'a Notifier<'a>,
     key_up: Instant,
     queued: Vec<UtteranceId>,
+    /// What each queued utterance says, for the overlay when it starts.
+    texts: Vec<(UtteranceId, String)>,
     ended: usize,
     marks: Vec<(UtteranceId, Mark)>,
     /// The next sentence queued gets this mark.
@@ -843,6 +860,7 @@ impl<'a> Voice<'a> {
             notify,
             key_up,
             queued: Vec::new(),
+            texts: Vec::new(),
             ended: 0,
             marks: Vec::new(),
             next_mark: None,
@@ -911,6 +929,7 @@ impl<'a> Voice<'a> {
             .speak(text)
             .map_err(|e| TurnError::Speech(e.to_string()))?;
         self.queued.push(id);
+        self.texts.push((id, text.to_owned()));
         if let Some(mark) = self.next_mark.take() {
             self.marks.push((id, mark));
         }
@@ -925,6 +944,9 @@ impl<'a> Voice<'a> {
         match event {
             None => return Err(TurnError::Speech("the speech engine stopped".into())),
             Some(SpeechEvent::Started(id)) if self.queued.contains(&id) => {
+                if let Some((_, text)) = self.texts.iter().find(|(t, _)| *t == id) {
+                    self.shared.show(Shown::Said(text.clone()));
+                }
                 let at = self.key_up.elapsed();
                 if report.ttfa.is_none() {
                     report.ttfa = Some(at);
@@ -1056,6 +1078,7 @@ async fn speak_line(shared: &Shared, line: &str) {
     let Ok(id) = shared.tts.speak(line) else {
         return;
     };
+    shared.show(Shown::Said(line.to_owned()));
     let over = async {
         while let Some(event) = speech.recv().await {
             if let SpeechEvent::Finished(e) | SpeechEvent::Cancelled(e) = event

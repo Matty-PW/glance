@@ -15,7 +15,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
-| M5 | Not started |
+| M5: overlay, settings, model management | **In progress.** Platform split and overlay done; settings window and models panel next |
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -43,6 +43,32 @@ Left:
    length; the chunker's early first chunk is 40 characters).
 
 Phonemizer decision: `THIRD_PARTY.md` and `docs/DESIGN.md` §6.3.
+
+## M5 (in progress)
+
+Decisions (maintainer, 2026-11-18): native macOS UI (non-activating NSPanel
+overlay, native settings window), small and behind a trait; settings cover
+voice, length, models, think-harder options and hotkeys, config.toml stays
+the source of truth for the rest; voice, length and think-harder apply live,
+hotkeys live only if the new chord registers, model changes via "Apply and
+restart". Remote endpoints and the Keychain are a later milestone with a
+security review. All macOS code lives in `crates/macos` (`glance-macos`);
+no AppKit type reaches the core crates; no Windows code yet.
+
+Done:
+- Platform split: ScreenCaptureKit capture, permissions, system voice,
+  Carbon hotkeys, the app shell and the bundler moved into `glance-macos`;
+  the app talks to the UI through the orchestrator's `Shell` trait.
+- Overlay (`crates/macos/src/overlay.rs`): borderless non-activating
+  NSPanel, click-through, every Space, top right; status line (state,
+  think-harder stage, DEEP loading, screenshot age), the question, and the
+  answer sentence by sentence as it sounds; hides 6 s after the turn.
+  Text arrives on a display-only feed (`Shown`), never logged.
+  `[overlay] enabled` in config.toml; `glance app --overlay-demo` plays a
+  scripted turn to check its look.
+
+Left: settings window; models panel; rebuild the bundle and run the M2/M3
+hands-on checks with the maintainer.
 
 ## M4 (in progress)
 

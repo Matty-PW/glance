@@ -54,6 +54,10 @@ pub struct Args {
     /// Do not send the image ahead of the question.
     #[arg(long)]
     no_prewarm: bool,
+    /// Play a short scripted turn on the overlay at start-up (fixed sample
+    /// text, nothing is captured or asked), to check how it looks.
+    #[arg(long)]
+    overlay_demo: bool,
     #[command(flatten)]
     speech: SpeechArgs,
 }
@@ -118,11 +122,15 @@ pub fn run(args: Args) -> Result<()> {
         model_line,
         on_quit: Box::new(tiers::shutdown),
         on_new_session: Box::new(new_session),
+        overlay: config_file.overlay.enabled,
     };
     let handle = runtime.handle().clone();
     glance_macos::shell::run(options, move |key_events, shell| {
         // No key events: a chord did not register; the shell shows why.
         if let Some(key_events) = key_events {
+            if args.overlay_demo {
+                handle.spawn(overlay_demo(Arc::clone(&shell)));
+            }
             handle.spawn(start(args, models, settings, fast, deep, key_events, shell));
         }
     })
@@ -213,6 +221,14 @@ async fn start(
     if deep.is_some() {
         shell.update(&Update::Deep(DeepStatus::NotLoaded));
     }
+    // Overlay text goes straight to the shell, never to a log.
+    let (display_tx, mut display_rx) = tokio::sync::mpsc::unbounded_channel();
+    let display_shell = Arc::clone(&shell);
+    tokio::spawn(async move {
+        while let Some(shown) = display_rx.recv().await {
+            display_shell.display(&shown);
+        }
+    });
     let deep_max_edge = TurnConfig::default().deep_max_edge;
     let mut deep_body = TurnConfig::default().deep_extra_body;
     deep_body.insert("chat_template_kwargs".into(), models.deep_template_kwargs());
@@ -229,6 +245,7 @@ async fn start(
         deep,
         tts: voice,
         speech_events,
+        display: Some(display_tx),
     };
     let config = TurnConfig {
         max_edge: args.max_edge,
@@ -257,6 +274,29 @@ fn new_session() {
     if let Some(controller) = CONTROLLER.get() {
         controller.new_session();
     }
+}
+
+/// `--overlay-demo`: a scripted turn with fixed text, through the real shell.
+async fn overlay_demo(shell: Arc<dyn Shell>) {
+    use glance_orchestrator::Shown;
+    use std::time::Duration;
+    let pause = |ms| tokio::time::sleep(Duration::from_millis(ms));
+    pause(1500).await;
+    shell.display(&Shown::Clear);
+    shell.update(&Update::State(TurnState::Listening));
+    pause(1500).await;
+    shell.display(&Shown::Asked("What does this chart show?".into()));
+    shell.update(&Update::State(TurnState::Thinking));
+    pause(700).await;
+    shell.update(&Update::State(TurnState::Speaking));
+    for sentence in [
+        "Weekly active users rose from 1,240 to 1,720 over four weeks.",
+        "Week three dipped slightly before the biggest jump in week four.",
+    ] {
+        shell.display(&Shown::Said(sentence.into()));
+        pause(1800).await;
+    }
+    shell.update(&Update::State(TurnState::Idle));
 }
 
 /// Orchestrator updates to the shell, plus the per-turn log line.

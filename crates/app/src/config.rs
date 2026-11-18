@@ -35,6 +35,9 @@
 //! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only)
 //! deep_mtp = true               # speculative decoding with the model's MTP layers
 //!
+//! [overlay]
+//! enabled = true                # the floating panel with question and answer
+//!
 //! [hotkeys]                     # modifiers Ctrl, Opt, Shift, Cmd, then one key
 //! talk = "Ctrl+Opt+G"           # ask about the screenshot
 //! look = "Ctrl+Opt+Shift+G"     # take a fresh look and ask
@@ -54,6 +57,19 @@ pub struct Config {
     pub speech: SpeechConfig,
     pub models: ModelsConfig,
     pub hotkeys: HotkeysConfig,
+    pub overlay: OverlayConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct OverlayConfig {
+    pub enabled: bool,
+}
+
+impl Default for OverlayConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

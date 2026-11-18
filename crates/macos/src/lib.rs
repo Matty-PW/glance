@@ -6,8 +6,8 @@
 //! - [`system_voice::SystemVoice`]: `TextToSpeech` with AVSpeechSynthesizer.
 //! - [`permission`]: Screen Recording and Microphone permission state.
 //! - [`hotkeys`]: the chords as Carbon hotkeys (no Input Monitoring).
-//! - [`shell`]: the app (NSApplication run loop, menu-bar icon), the
-//!   orchestrator's `Shell`.
+//! - [`shell`]: the app (NSApplication run loop, menu-bar icon, overlay),
+//!   the orchestrator's `Shell`.
 //! - [`bundle`]: assembling and signing `Glance.app` (used by `cargo xtask`).
 //!
 //! On any other platform this crate is empty.
@@ -16,6 +16,7 @@
 pub mod bundle;
 pub mod capture;
 pub mod hotkeys;
+mod overlay;
 pub mod permission;
 pub mod shell;
 pub mod system_voice;

@@ -333,6 +333,7 @@ struct Harness {
     tts: Arc<TtsLog>,
     captures: Arc<AtomicUsize>,
     controller: Controller,
+    display: UnboundedReceiver<crate::Shown>,
 }
 
 impl Harness {
@@ -359,6 +360,7 @@ impl Harness {
         let tts_log = Arc::new(TtsLog::default());
         let captures = Arc::new(AtomicUsize::new(0));
         let (events, speech_events) = mpsc::unbounded_channel();
+        let (display_tx, display) = mpsc::unbounded_channel();
         let parts = Parts {
             capture: Arc::new(MockCapture {
                 fail: setup.capture_fails,
@@ -387,6 +389,7 @@ impl Harness {
                 log: Arc::clone(&tts_log),
             }),
             speech_events,
+            display: Some(display_tx),
         };
         let (orchestrator, updates) = Orchestrator::new(parts, setup.config);
         let controller = orchestrator.controller();
@@ -404,6 +407,7 @@ impl Harness {
             tts: tts_log,
             captures,
             controller,
+            display,
         }
     }
 
@@ -1334,4 +1338,28 @@ async fn tell_me_more_with_nothing_to_continue_is_an_ordinary_question() {
     let updates = h.ask(Chord::Talk).await;
     assert!(!reports(&updates)[0].more);
     assert_eq!(h.questions()[0].layout, ["U:img1+Tell me more."]);
+}
+
+// ---- overlay feed -----------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_overlay_gets_the_question_then_each_sentence_as_it_is_spoken() {
+    use crate::Shown;
+    let mut h = Harness::new(Setup::default());
+    h.ask(Chord::Talk).await;
+    let mut shown = Vec::new();
+    while let Ok(s) = h.display.try_recv() {
+        shown.push(s);
+    }
+    assert_eq!(
+        shown,
+        [
+            Shown::Clear,
+            Shown::Asked("what is this window".into()),
+            Shown::Said("It is a code editor.".into()),
+            Shown::Said("It shows a Rust file.".into()),
+        ]
+    );
+    // Its Debug never shows the text.
+    assert_eq!(format!("{:?}", shown[1]), "Asked(19 chars)");
 }

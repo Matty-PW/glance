@@ -10,12 +10,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dispatch2::DispatchQueue;
-use glance_orchestrator::{HotkeyEvent, Outcome, Shell, Update};
+use glance_orchestrator::{HotkeyEvent, Outcome, Shell, Shown, Update};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::hotkeys::{self, Chords};
+use crate::overlay::{self, OverlayEvent};
 use crate::permission::{request_screen_recording, screen_recording_granted};
 use crate::tray::{self, View};
 
@@ -29,6 +30,8 @@ pub struct Options {
     pub on_quit: Box<dyn Fn() + Send + Sync>,
     /// The tray's "New session".
     pub on_new_session: Box<dyn Fn() + Send + Sync>,
+    /// Show the floating overlay (config `[overlay] enabled`).
+    pub overlay: bool,
 }
 
 struct Actions {
@@ -38,8 +41,10 @@ struct Actions {
 
 static ACTIONS: OnceLock<Actions> = OnceLock::new();
 
-/// The [`Shell`] on macOS: menu-bar icon (and, from M5, the overlay).
-pub struct MacShell;
+/// The [`Shell`] on macOS: the menu-bar icon and the overlay.
+pub struct MacShell {
+    overlay: bool,
+}
 
 impl Shell for MacShell {
     fn status(&self, text: &str) {
@@ -51,6 +56,18 @@ impl Shell for MacShell {
     }
 
     fn update(&self, update: &Update) {
+        if self.overlay {
+            let event = match update {
+                Update::State(state) => Some(OverlayEvent::State(*state)),
+                Update::Progress(progress) => Some(OverlayEvent::Progress(*progress)),
+                Update::Deep(status) => Some(OverlayEvent::Deep(*status)),
+                Update::Session(info) => Some(OverlayEvent::Session(*info)),
+                Update::Report(_) => None,
+            };
+            if let Some(event) = event {
+                DispatchQueue::main().exec_async(move || overlay::apply(event));
+            }
+        }
         match update {
             Update::State(state) => show(View::state(*state)),
             Update::Report(report) => {
@@ -61,6 +78,13 @@ impl Shell for MacShell {
             Update::Progress(progress) => show(View::progress(*progress)),
             Update::Deep(status) => show(View::deep(*status)),
             Update::Session(info) => show(View::session(*info)),
+        }
+    }
+
+    fn display(&self, shown: &Shown) {
+        if self.overlay {
+            let event = OverlayEvent::Shown(shown.clone());
+            DispatchQueue::main().exec_async(move || overlay::apply(event));
         }
     }
 }
@@ -88,9 +112,17 @@ pub fn run(
     // The tray may only be created once the run loop is running; the main
     // queue runs this block as soon as it is.
     let model_line = options.model_line.clone();
-    DispatchQueue::main().exec_async(move || tray::install(&model_line));
+    let with_overlay = options.overlay;
+    DispatchQueue::main().exec_async(move || {
+        tray::install(&model_line);
+        if with_overlay {
+            overlay::install();
+        }
+    });
 
-    let shell: Arc<dyn Shell> = Arc::new(MacShell);
+    let shell: Arc<dyn Shell> = Arc::new(MacShell {
+        overlay: options.overlay,
+    });
     let _hotkeys = match registered {
         Ok(hotkeys) => {
             let labels = hotkeys::labels();
@@ -122,7 +154,10 @@ pub fn run(
         .spawn(|| {
             loop {
                 std::thread::sleep(Duration::from_secs(3));
-                DispatchQueue::main().exec_async(tray::refresh);
+                DispatchQueue::main().exec_async(|| {
+                    tray::refresh();
+                    overlay::tick();
+                });
             }
         })
         .map_err(|e| format!("could not start the tray refresh: {e}"))?;
