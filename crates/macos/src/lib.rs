@@ -18,6 +18,7 @@ pub mod capture;
 pub mod hotkeys;
 mod overlay;
 pub mod permission;
+mod settings;
 pub mod shell;
 pub mod system_voice;
 mod tray;

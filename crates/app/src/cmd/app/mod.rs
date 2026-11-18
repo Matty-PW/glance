@@ -6,6 +6,7 @@
 //! main-thread run loop, hotkeys, menu-bar icon) is `glance_macos::shell`.
 //! The tokio runtime runs the orchestrator beside the main thread.
 
+mod settings;
 mod tiers;
 
 use std::sync::{Arc, OnceLock};
@@ -58,6 +59,9 @@ pub struct Args {
     /// text, nothing is captured or asked), to check how it looks.
     #[arg(long)]
     overlay_demo: bool,
+    /// Open the settings window at start-up (also in the menu-bar menu).
+    #[arg(long)]
+    open_settings: bool,
     #[command(flatten)]
     speech: SpeechArgs,
 }
@@ -123,11 +127,17 @@ pub fn run(args: Args) -> Result<()> {
         on_quit: Box::new(tiers::shutdown),
         on_new_session: Box::new(new_session),
         overlay: config_file.overlay.enabled,
+        settings: Some(
+            settings::backend() as Arc<dyn glance_orchestrator::settings::SettingsBackend>
+        ),
     };
     let handle = runtime.handle().clone();
     glance_macos::shell::run(options, move |key_events, shell| {
         // No key events: a chord did not register; the shell shows why.
         if let Some(key_events) = key_events {
+            if args.open_settings {
+                glance_macos::shell::open_settings();
+            }
             if args.overlay_demo {
                 handle.spawn(overlay_demo(Arc::clone(&shell)));
             }
@@ -181,7 +191,7 @@ async fn start(
         Err(e) => return fail(format!("speech engine: {e}")),
     };
     eprintln!("glance: speech: {}", started.description);
-    let (voice, speech_events) = (started.tts, started.events);
+    let (voice, speech_events, speech_control) = (started.tts, started.events, started.control);
     let fast = match fast.await {
         Ok(Ok(tier)) => tier,
         Ok(Err(e)) => return fail(format!("FAST model: {e:#}")),
@@ -264,6 +274,7 @@ async fn start(
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
     let _ = CONTROLLER.set(orchestrator.controller());
+    settings::backend().attach(orchestrator.controller(), speech_control);
     tokio::spawn(forward_updates(updates, Arc::clone(&shell)));
     shell.update(&Update::State(TurnState::Idle));
     eprintln!("glance: ready");

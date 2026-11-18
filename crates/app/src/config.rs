@@ -1,7 +1,8 @@
 //! `~/Library/Application Support/glance/config.toml`: settings that are not
 //! secrets (API keys go in the Keychain, never here). A missing file means
 //! defaults; an invalid one is an error that names the problem, so a typo
-//! never silently changes behaviour. A settings UI arrives in M5.
+//! never silently changes behaviour. The settings window (tray menu) edits
+//! a few of these in place, keeping the rest of the file as written.
 //!
 //! ```toml
 //! [speech]
@@ -32,7 +33,7 @@
 //! fast_ctx = 8192
 //! deep_ctx = 16384
 //! deep_effort = "medium"        # Qwen3.8 reasoning effort: low, medium, xhigh, or off
-//! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only)
+//! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only; 0: no cap)
 //! deep_mtp = true               # speculative decoding with the model's MTP layers
 //!
 //! [overlay]
@@ -127,7 +128,7 @@ impl ModelsConfig {
         if self.deep_mtp {
             args.extend(["--spec-type".to_owned(), "draft-mtp".to_owned()]);
         }
-        if let Some(budget) = self.deep_thinking_budget {
+        if let Some(budget) = self.thinking_budget() {
             args.extend([
                 "--reasoning-budget".to_owned(),
                 budget.to_string(),
@@ -136,6 +137,11 @@ impl ModelsConfig {
             ]);
         }
         args
+    }
+
+    /// The thinking cap; 0 in the file means none.
+    pub fn thinking_budget(&self) -> Option<u32> {
+        self.deep_thinking_budget.filter(|b| *b > 0)
     }
 
     /// Chat-template variables for every DEEP request (prewarm and question

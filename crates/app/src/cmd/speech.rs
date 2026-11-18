@@ -123,6 +123,24 @@ pub struct Speech {
     pub events: UnboundedReceiver<SpeechEvent>,
     /// For log lines: "kokoro fp32, voice af_heart, speed 1".
     pub description: String,
+    /// The same engine, for changing voice and speed while running.
+    pub control: SpeechControl,
+}
+
+/// The running engine's own handle (settings window).
+#[derive(Clone)]
+pub enum SpeechControl {
+    Kokoro(Arc<KokoroVoice>),
+    System(Arc<SystemVoice>),
+}
+
+impl SpeechControl {
+    pub fn engine(&self) -> Engine {
+        match self {
+            SpeechControl::Kokoro(_) => Engine::Kokoro,
+            SpeechControl::System(_) => Engine::System,
+        }
+    }
 }
 
 /// Start the configured engine. Blocks while Kokoro loads (about a second);
@@ -139,8 +157,10 @@ pub fn start(settings: &SpeechConfig) -> Speech {
         rate: settings.system_rate,
         volume: settings.volume,
     });
+    let voice = Arc::new(voice);
     Speech {
-        tts: Arc::new(voice),
+        tts: Arc::clone(&voice) as Arc<dyn TextToSpeech>,
+        control: SpeechControl::System(voice),
         events,
         description: format!(
             "system voice {}",
@@ -163,8 +183,10 @@ fn start_kokoro(settings: &SpeechConfig) -> Result<Speech> {
         idle_close: Duration::from_secs(30),
     };
     let (kokoro, events) = KokoroVoice::start(config)?;
+    let kokoro = Arc::new(kokoro);
     Ok(Speech {
-        tts: Arc::new(kokoro),
+        tts: Arc::clone(&kokoro) as Arc<dyn TextToSpeech>,
+        control: SpeechControl::Kokoro(kokoro),
         events,
         description: format!(
             "kokoro {}, voice {voice}, speed {}",

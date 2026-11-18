@@ -65,7 +65,7 @@ objc2-avf-audio = { version = "=0.3.2", default-features = false, features = ["s
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSRunLoop", "NSDate", "NSObjCRuntime", "NSGeometry"] }
 # M2: live screen capture (ScreenCaptureKit) and the frontmost-app lookup.
 # M5 overlay: a non-activating NSPanel with plain text labels.
-objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSResponder", "NSRunningApplication", "NSWorkspace", "NSPanel", "NSWindow", "NSView", "NSTextField", "NSControl", "NSColor", "NSFont", "NSScreen", "NSVisualEffectView", "NSText", "NSGraphics", "NSParagraphStyle", "objc2-core-foundation"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "libc", "NSApplication", "NSResponder", "NSRunningApplication", "NSWorkspace", "NSPanel", "NSWindow", "NSView", "NSTextField", "NSControl", "NSColor", "NSFont", "NSScreen", "NSVisualEffectView", "NSText", "NSGraphics", "NSParagraphStyle", "NSPopUpButton", "NSButton", "NSSlider", "NSMenu", "NSMenuItem", "NSButtonCell", "NSSliderCell", "NSActionCell", "NSCell", "NSPopUpButtonCell", "NSMenuItemCell", "objc2-core-foundation"] }
 objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "CGWindow", "CGDirectDisplay"] }
 screencapturekit = { version = "=11.1.2", features = ["macos_14_0"] }
 # M2: the menu-bar app. Carbon hotkeys (no Input Monitoring permission), the

@@ -7,7 +7,8 @@
 //! "Ctrl+Opt+T" (modifiers Ctrl, Opt/Option/Alt, Shift, Cmd; then one key).
 //! At least one modifier is required, so a chord can never swallow typing.
 
-use std::sync::OnceLock;
+use std::cell::RefCell;
+use std::sync::RwLock;
 
 use glance_orchestrator::{Chord, HotkeyEvent};
 use global_hotkey::hotkey::HotKey;
@@ -40,17 +41,109 @@ pub struct Labels {
     pub think: String,
 }
 
-static LABELS: OnceLock<Labels> = OnceLock::new();
+static LABELS: RwLock<Option<Labels>> = RwLock::new(None);
+/// Which registered hotkey id is which chord (read by the event handler).
+static IDS: RwLock<Vec<(u32, Chord)>> = RwLock::new(Vec::new());
+
+/// The manager and the chords now registered.
+type Active = Option<(GlobalHotKeyManager, Vec<(Chord, HotKey)>)>;
+
+thread_local! {
+    /// Main thread only.
+    static ACTIVE: RefCell<Active> = const { RefCell::new(None) };
+}
 
 /// The registered chords' labels (the defaults until registration).
 pub fn labels() -> Labels {
-    LABELS.get().cloned().unwrap_or_else(|| {
-        let d = Chords::default();
-        Labels {
-            talk: d.talk,
-            look: d.look,
-            think: d.think,
+    LABELS
+        .read()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+        .unwrap_or_else(|| {
+            let d = Chords::default();
+            Labels {
+                talk: d.talk,
+                look: d.look,
+                think: d.think,
+            }
+        })
+}
+
+fn set_labels(chords: &Chords) {
+    *LABELS.write().unwrap_or_else(|p| p.into_inner()) = Some(Labels {
+        talk: chords.talk.clone(),
+        look: chords.look.clone(),
+        think: chords.think.clone(),
+    });
+}
+
+fn set_ids(registered: &[(Chord, HotKey)]) {
+    *IDS.write().unwrap_or_else(|p| p.into_inner()) =
+        registered.iter().map(|(c, h)| (h.id(), *c)).collect();
+}
+
+/// Parse all three chords and refuse duplicates.
+fn parse_all(chords: &Chords) -> Result<Vec<(Chord, HotKey, String)>, String> {
+    let wanted = [
+        (Chord::Talk, &chords.talk),
+        (Chord::Look, &chords.look),
+        (Chord::Think, &chords.think),
+    ];
+    let mut parsed: Vec<(Chord, HotKey, String)> = Vec::with_capacity(3);
+    for (chord, text) in wanted {
+        let hotkey = parse(text).map_err(|e| format!("hotkeys.{}: {e}", chord.as_str()))?;
+        if let Some((other, _, _)) = parsed.iter().find(|(_, h, _)| h.id() == hotkey.id()) {
+            return Err(format!(
+                "hotkeys.{} and hotkeys.{} are the same chord ({text})",
+                other.as_str(),
+                chord.as_str()
+            ));
         }
+        parsed.push((chord, hotkey, text.clone()));
+    }
+    Ok(parsed)
+}
+
+/// Change the chords while running (settings window, main thread). Each new
+/// chord is registered before the old one is released; if any cannot be
+/// registered, every change is undone and the old chords stay.
+pub fn rebind(chords: &Chords) -> Result<(), String> {
+    let wanted = parse_all(chords)?;
+    ACTIVE.with_borrow_mut(|active| {
+        let Some((manager, current)) = active.as_mut() else {
+            return Err("hotkeys are not set up".to_owned());
+        };
+        let changed: Vec<&(Chord, HotKey, String)> = wanted
+            .iter()
+            .filter(|(chord, hotkey, _)| {
+                current
+                    .iter()
+                    .find(|(c, _)| c == chord)
+                    .is_none_or(|(_, h)| h.id() != hotkey.id())
+            })
+            .collect();
+        let mut added = Vec::new();
+        for (chord, hotkey, text) in &changed {
+            if let Err(e) = manager.register(*hotkey) {
+                for undo in added {
+                    let _ = manager.unregister(undo);
+                }
+                return Err(format!(
+                    "{text} could not be registered for {} ({e}); the old chord stays",
+                    chord.as_str()
+                ));
+            }
+            added.push(*hotkey);
+        }
+        for (chord, _, _) in &changed {
+            if let Some((_, old)) = current.iter().find(|(c, _)| c == chord) {
+                let _ = manager.unregister(*old);
+            }
+        }
+        *current = wanted.iter().map(|(c, h, _)| (*c, *h)).collect();
+        set_ids(current);
+        set_labels(chords);
+        Ok(())
     })
 }
 
@@ -75,41 +168,21 @@ pub fn parse(chord: &str) -> Result<HotKey, String> {
         .map_err(|e| format!("`{chord}` is not a chord: {e}"))
 }
 
-/// Keeps the chords registered for as long as it is alive.
+/// Proof that the chords are registered; the manager itself lives in
+/// main-thread state so the settings window can change the chords.
 pub struct Hotkeys {
-    _manager: GlobalHotKeyManager,
+    _private: (),
 }
 
 /// Register the chords and forward their presses and releases to `events`.
 /// On failure the message names every chord that could not be registered.
 pub fn register(events: UnboundedSender<HotkeyEvent>, config: &Chords) -> Result<Hotkeys, String> {
-    let chords = [
-        (Chord::Talk, config.talk.as_str()),
-        (Chord::Look, config.look.as_str()),
-        (Chord::Think, config.think.as_str()),
-    ];
-    let mut parsed = Vec::with_capacity(chords.len());
-    for (chord, text) in chords {
-        let hotkey = parse(text).map_err(|e| format!("hotkeys.{}: {e}", chord.as_str()))?;
-        if let Some((other, _)) = parsed
-            .iter()
-            .find(|(_, h): &&(Chord, HotKey)| h.id() == hotkey.id())
-        {
-            return Err(format!(
-                "hotkeys.{} and hotkeys.{} are the same chord ({text})",
-                other.as_str(),
-                chord.as_str()
-            ));
-        }
-        parsed.push((chord, hotkey));
-    }
-
+    let parsed = parse_all(config)?;
     let manager =
         GlobalHotKeyManager::new().map_err(|e| format!("could not set up global hotkeys: {e}"))?;
     let failures: Vec<String> = parsed
         .iter()
-        .zip(chords)
-        .filter_map(|((_, hotkey), (_, label))| {
+        .filter_map(|(_, hotkey, label)| {
             manager
                 .register(*hotkey)
                 .err()
@@ -119,24 +192,26 @@ pub fn register(events: UnboundedSender<HotkeyEvent>, config: &Chords) -> Result
     if !failures.is_empty() {
         return Err(failures.join("; "));
     }
-    let _ = LABELS.set(Labels {
-        talk: config.talk.clone(),
-        look: config.look.clone(),
-        think: config.think.clone(),
-    });
+    let registered: Vec<(Chord, HotKey)> = parsed.iter().map(|(c, h, _)| (*c, *h)).collect();
+    set_ids(&registered);
+    set_labels(config);
+    ACTIVE.with_borrow_mut(|active| *active = Some((manager, registered)));
 
-    let ids: Vec<(u32, Chord)> = parsed.iter().map(|(c, h)| (h.id(), *c)).collect();
     GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
-        let Some(&(_, chord)) = ids.iter().find(|(id, _)| *id == event.id()) else {
-            return;
-        };
+        let chord = IDS
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|(id, _)| *id == event.id())
+            .map(|(_, chord)| *chord);
+        let Some(chord) = chord else { return };
         let event = match event.state() {
             HotKeyState::Pressed => HotkeyEvent::Pressed(chord),
             HotKeyState::Released => HotkeyEvent::Released(chord),
         };
         let _ = events.send(event);
     }));
-    Ok(Hotkeys { _manager: manager })
+    Ok(Hotkeys { _private: () })
 }
 
 #[cfg(test)]

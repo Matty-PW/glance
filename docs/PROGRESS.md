@@ -15,7 +15,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
-| M5: overlay, settings, model management | **In progress.** Platform split and overlay done; settings window and models panel next |
+| M5: overlay, settings, model management | **In progress.** Platform split, overlay and settings window done; models panel next |
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -67,8 +67,29 @@ Done:
   `[overlay] enabled` in config.toml; `glance app --overlay-demo` plays a
   scripted turn to check its look.
 
-Left: settings window; models panel; rebuild the bundle and run the M2/M3
-hands-on checks with the maintainer.
+- Stale llama-server cleanup: PID files in
+  `~/Library/Application Support/glance/run/`; at start-up a server whose
+  glance is gone is stopped only if its command line is still
+  `llama-server --host 127.0.0.1 --port <that port>`. Tested with fakes
+  (6 tests) and for real: a SIGKILLed glance's orphan was stopped by the
+  next start.
+- Settings window (`crates/macos/src/settings.rs`, tray "Settings…" or
+  `glance app --open-settings`): voice engine, voice, Kokoro speed, a
+  three-stop length slider, DEEP reasoning effort and idle unload (all
+  live), FAST/DEEP model, DEEP thinking cap and auto-escalation ("Apply and
+  restart"), and the three hotkeys (live; each new chord registers before
+  the old one is released, and a failure keeps the old chords and says
+  why). Portable types and the `SettingsBackend` trait are in
+  `glance_orchestrator::settings`; the app implements it. Changes are
+  written into config.toml in place (`crates/app/src/config_edit.rs`:
+  other lines and comments kept, the result is validated with the strict
+  parser before it replaces the file). Switching voice engine needs a
+  restart. `deep_thinking_budget = 0` now means no cap.
+  Not yet checked by hand: layout, live hotkey change, Apply and restart
+  from the bundle.
+
+Left: check the settings window by hand; models panel; rebuild the bundle
+and run the M2/M3 hands-on checks with the maintainer.
 
 ## M4 (in progress)
 

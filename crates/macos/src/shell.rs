@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dispatch2::DispatchQueue;
+use glance_orchestrator::settings::SettingsBackend;
 use glance_orchestrator::{HotkeyEvent, Outcome, Shell, Shown, Update};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
@@ -32,6 +33,8 @@ pub struct Options {
     pub on_new_session: Box<dyn Fn() + Send + Sync>,
     /// Show the floating overlay (config `[overlay] enabled`).
     pub overlay: bool,
+    /// Reads and saves settings for the settings window.
+    pub settings: Option<Arc<dyn SettingsBackend>>,
 }
 
 struct Actions {
@@ -40,6 +43,12 @@ struct Actions {
 }
 
 static ACTIONS: OnceLock<Actions> = OnceLock::new();
+static SETTINGS: OnceLock<Arc<dyn SettingsBackend>> = OnceLock::new();
+
+/// The app's settings backend, if it gave one.
+pub(crate) fn settings_backend() -> Option<Arc<dyn SettingsBackend>> {
+    SETTINGS.get().cloned()
+}
 
 /// The [`Shell`] on macOS: the menu-bar icon and the overlay.
 pub struct MacShell {
@@ -104,6 +113,9 @@ pub fn run(
         on_quit: options.on_quit,
         on_new_session: options.on_new_session,
     });
+    if let Some(settings) = options.settings {
+        let _ = SETTINGS.set(settings);
+    }
 
     // Hotkeys first: if a chord cannot be registered, say which and do not
     // run the pipeline, so glance never sits there without a working chord.
@@ -178,6 +190,46 @@ pub(crate) fn quit() {
     if let Some(mtm) = MainThreadMarker::new() {
         NSApplication::sharedApplication(mtm).terminate(None);
     }
+}
+
+/// "Apply and restart" (settings): start a fresh glance with the same
+/// arguments once this one has exited, so its hotkeys and model servers are
+/// free. Inside Glance.app that goes through `open -n`.
+pub(crate) fn relaunch() {
+    let Ok(exe) = std::env::current_exe() else {
+        eprintln!("glance: cannot find this executable to restart it; quit and start glance again");
+        return;
+    };
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let exe_text = exe.to_string_lossy().into_owned();
+    let mut command = std::process::Command::new("/bin/sh");
+    // The arguments go in as positional parameters, never into the script
+    // text, so nothing in them is interpreted by the shell. The helper waits
+    // for this process to exit (at most 30 s), then starts the new one.
+    command.args([
+        "-c",
+        "p=$1; shift; i=0; while kill -0 \"$p\" 2>/dev/null && [ $i -lt 150 ]; do sleep 0.2; i=$((i+1)); done; exec \"$@\"",
+        "sh",
+        &std::process::id().to_string(),
+    ]);
+    match exe_text.find(".app/Contents/MacOS/") {
+        Some(at) => {
+            command.args(["/usr/bin/open", "-n", &exe_text[..at + 4], "--args"]);
+        }
+        None => {
+            command.arg(&exe);
+        }
+    }
+    command.args(&args);
+    match command.spawn() {
+        Ok(_) => quit(),
+        Err(e) => eprintln!("glance: could not restart ({e}); quit and start glance again"),
+    }
+}
+
+/// Show the settings window (tray menu, or `--open-settings`).
+pub fn open_settings() {
+    dispatch2::DispatchQueue::main().exec_async(crate::settings::open);
 }
 
 /// "New session" (tray menu).
