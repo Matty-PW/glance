@@ -3,6 +3,7 @@
 
 mod cmd;
 mod config;
+mod config_edit;
 
 use clap::{Parser, Subcommand};
 
