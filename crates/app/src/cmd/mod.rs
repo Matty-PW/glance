@@ -43,6 +43,35 @@ pub fn store() -> Result<ModelStore> {
     Ok(ModelStore::default_location()?)
 }
 
+/// Where glance keeps run-time state such as the managed servers' PID
+/// files: `~/Library/Application Support/glance/run`.
+pub fn run_dir() -> Result<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").context("HOME is not set")?;
+    Ok(std::path::PathBuf::from(home).join("Library/Application Support/glance/run"))
+}
+
+/// Stop llama-servers a crashed glance left behind (see
+/// `glance_llm_client::stale`), saying what was done.
+pub fn clean_stale_servers() {
+    use glance_llm_client::stale::{Cleanup, clean_stale};
+    let Ok(dir) = run_dir() else { return };
+    for done in clean_stale(&dir) {
+        match done {
+            Cleanup::Stopped { port, pid, alias } => eprintln!(
+                "glance: stopped a llama-server left running by an earlier glance \
+                 ({alias}, pid {pid}, port {port})"
+            ),
+            Cleanup::NotOurs { port, pid } => eprintln!(
+                "glance: stale PID file for port {port}: pid {pid} is now another process; \
+                 left it alone"
+            ),
+            Cleanup::OwnerRunning { .. }
+            | Cleanup::AlreadyGone { .. }
+            | Cleanup::Malformed { .. } => {}
+        }
+    }
+}
+
 /// The Kokoro precisions in `models.toml`, by short name.
 pub const KOKORO_MODELS: &[(&str, &str)] = &[
     ("fp32", "kokoro-82m-v1.0-fp32"),

@@ -120,6 +120,7 @@ async fn start_managed(id: String, ctx: u32, args: Vec<String>) -> Result<Manage
             // Large DEEP models take a while to load.
             start_timeout: Duration::from_secs(300),
             extra_args: args,
+            pid_dir: super::super::run_dir().ok(),
         })
     })
     .await??;

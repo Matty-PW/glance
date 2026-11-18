@@ -156,6 +156,7 @@ pub async fn run(args: Args) -> Result<()> {
         voice.description, glance_rss, before
     );
 
+    super::clean_stale_servers();
     let mut turns: Vec<Turn> = Vec::new();
     let mut summaries = Vec::new();
     for model in &args.models {

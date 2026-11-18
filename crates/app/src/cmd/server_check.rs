@@ -52,7 +52,9 @@ pub async fn run(args: Args) -> Result<()> {
         show_output: args.show_output,
         start_timeout: Duration::from_secs(180),
         extra_args: Vec::new(),
+        pid_dir: super::run_dir().ok(),
     };
+    super::clean_stale_servers();
     let started = Instant::now();
     let server = ManagedServer::start(&spec).await?;
     println!(

@@ -148,6 +148,10 @@ async fn start(
     shell: Arc<dyn Shell>,
 ) {
     shell.status("Starting the models…");
+    // A crashed glance may have left servers running; stop them first.
+    tokio::task::spawn_blocking(super::clean_stale_servers)
+        .await
+        .ok();
     let fail = |message: String| {
         eprintln!("glance: error: {message}");
         shell.fatal(&message);

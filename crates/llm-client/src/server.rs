@@ -8,7 +8,9 @@
 //!   does not report vision.
 //! - The child's output is discarded unless asked for, so nothing it might
 //!   log about a request ends up anywhere.
-//! - Dropping [`ManagedServer`] kills the process.
+//! - Dropping [`ManagedServer`] kills the process. With a `pid_dir`, a PID
+//!   file lets a later glance stop a server left behind by a crash
+//!   ([`crate::stale`]).
 
 use std::io::Read;
 use std::net::TcpListener;
@@ -54,12 +56,15 @@ pub struct ServerSpec {
     /// More llama-server flags, e.g. `--spec-type draft-mtp`. Fixed text
     /// from code or config, never from the screen or a model.
     pub extra_args: Vec<String>,
+    /// Where to write this server's PID file (see [`crate::stale`]).
+    pub pid_dir: Option<PathBuf>,
 }
 
 pub struct ManagedServer {
     child: Child,
     endpoint: Endpoint,
     port: u16,
+    pid_file: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for ManagedServer {
@@ -107,10 +112,27 @@ impl ManagedServer {
         let endpoint = Endpoint::loopback(&format!("{base}/v1"), spec.alias.clone())
             .expect("127.0.0.1 is loopback")
             .with_api_key(ApiKey::new(key.clone()));
+        let pid_file = spec.pid_dir.as_ref().and_then(|dir| {
+            let file = crate::stale::PidFile {
+                llama_pid: child.id(),
+                owner_pid: std::process::id(),
+                port,
+                alias: spec.alias.clone(),
+            };
+            file.write(dir)
+                .map_err(|e| {
+                    eprintln!(
+                        "glance: could not write a PID file in {}: {e}",
+                        dir.display()
+                    )
+                })
+                .ok()
+        });
         let mut server = Self {
             child,
             endpoint,
             port,
+            pid_file,
         };
         server.wait_ready(&base, &key, spec).await?;
         // From here on its stderr is not read; stop it filling a pipe.
@@ -198,6 +220,9 @@ impl Drop for ManagedServer {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let Some(path) = &self.pid_file {
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 

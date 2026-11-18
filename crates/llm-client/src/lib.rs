@@ -13,6 +13,7 @@ mod endpoint;
 pub mod escalate;
 pub mod server;
 mod sse;
+pub mod stale;
 mod types;
 
 use std::future::Future;

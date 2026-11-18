@@ -102,8 +102,14 @@ Left:
    format compliance with and without the grammar).
 3. Measure whether DEEP's background prewarm slows FAST (DESIGN §4).
 4. Pre-synthesize the filler lines when Kokoro is the voice.
-5. Managed servers are orphaned if glance crashes (macOS has no
-   parent-death signal); only Quit and Ctrl-C stop them.
+5. Done (2026-11-18): servers left behind by a crash are stopped at the
+   next start. Each managed server has a PID file in
+   `~/Library/Application Support/glance/run/`; `glance app`, the benches and
+   `server-check` read them first and stop a server whose glance is gone,
+   after checking the PID is still a `llama-server --host 127.0.0.1 --port
+   <that port>` (a reused PID is never touched). Tested with fake process
+   tables (6 tests) and for real: SIGKILL of `glance app`, then the next
+   start stopped the orphan and left the run directory empty.
 
 **DEEP bake-off, Qwen3.8-27B Q4_K_M (bartowski), MTP on (`glance deep-bench`).**
 Six hard eval questions, 2048 px image, FAST Qwen3-VL-4B alongside. FAST

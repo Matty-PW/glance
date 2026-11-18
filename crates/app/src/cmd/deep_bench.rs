@@ -179,6 +179,7 @@ pub async fn run(args: Args) -> Result<()> {
         }
     }
 
+    super::clean_stale_servers();
     // Both servers at once, as the app runs them.
     let mut mtp = if args.no_mtp {
         Vec::new()
@@ -584,6 +585,7 @@ pub(super) async fn start_server(
             show_output: false,
             start_timeout: Duration::from_secs(600),
             extra_args,
+            pid_dir: super::run_dir().ok(),
         })
     })
     .await??;
