@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use glance_capture::{PngFile, ScreenCapture};
 use glance_llm_client::{ChatEvent, ChatModel, Message, OpenAiClient, Part};
-use glance_orchestrator::SPOKEN_SYSTEM_PROMPT;
+use glance_orchestrator::length::ends_sentence;
+use glance_orchestrator::{ResponseLength, SPOKEN_SYSTEM_PROMPT};
 use glance_stt::Parakeet;
 use glance_tts::{ChunkerConfig, SentenceChunker};
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,9 @@ pub struct Args {
     /// How long the key is held (the user talking) on a fresh capture.
     #[arg(long, default_value_t = 3000)]
     hold_ms: u64,
+    /// response_length: short, medium (the default) or long.
+    #[arg(long, default_value = "medium")]
+    length: String,
     /// JSON with every answer and timing; a side-by-side .md is written next
     /// to it. Keep it in the gitignored eval-local/.
     #[arg(long, default_value = "eval-local/results/fast-compare.json")]
@@ -101,6 +105,9 @@ struct Turn {
     prompt_n: Option<u64>,
     tok_s: Option<f64>,
     finish_reason: Option<String>,
+    /// Speech stopped at the response-length cap.
+    capped: bool,
+    words: usize,
     /// Ordinary questions only: all expected phrases present.
     correct: Option<bool>,
     answer: String,
@@ -298,7 +305,12 @@ async fn ask(
 ) -> Result<Turn> {
     let body: Value =
         json!({"cache_prompt": true, "chat_template_kwargs": {"enable_thinking": false}});
-    let system = Message::system(SPOKEN_SYSTEM_PROMPT);
+    let length = ResponseLength::parse(&args.length).context("--length: short, medium or long")?;
+    let mut prompt = SPOKEN_SYSTEM_PROMPT.to_owned();
+    if let Some(hint) = length.hint() {
+        prompt.push_str(hint);
+    }
+    let system = Message::system(prompt);
     let (image, key_up, prewarm) = match fresh {
         Some((image, key_down)) => {
             let warm_request = req(
@@ -337,31 +349,51 @@ async fn ask(
     let send = key_up.elapsed();
     let sent_at = Instant::now();
     let mut stream = client
-        .chat(req(messages, args.max_tokens, &body, false))
+        .chat(req(
+            messages,
+            length.max_tokens(args.max_tokens, &question.ask),
+            &body,
+            false,
+        ))
         .await?;
     let mut chunker = SentenceChunker::new(ChunkerConfig::default());
     let (mut first_token, mut first_chunk) = (None, None);
     let mut answer = String::new();
     let mut summary = None;
-    while let Some(event) = stream.next().await {
+    // As the app does: stop at the sentence cap and keep what was spoken.
+    let cap = length.sentence_cap(&question.ask);
+    let (mut spoken, mut sentences, mut capped) = (String::new(), 0, false);
+    'read: while let Some(event) = stream.next().await {
         match event? {
             ChatEvent::Content(delta) => {
                 first_token.get_or_insert_with(|| sent_at.elapsed());
                 answer.push_str(&delta);
-                if first_chunk.is_none() && !chunker.push(&delta).is_empty() {
-                    first_chunk = Some(sent_at.elapsed());
+                for chunk in chunker.push(&delta) {
+                    first_chunk.get_or_insert_with(|| sent_at.elapsed());
+                    spoken.push_str(&chunk);
+                    spoken.push(' ');
+                    if ends_sentence(&chunk) {
+                        sentences += 1;
+                        if cap == Some(sentences) {
+                            capped = true;
+                            break 'read;
+                        }
+                    }
                 }
             }
             ChatEvent::Reasoning(_) => {}
             ChatEvent::Done(s) => {
-                if first_chunk.is_none() && chunker.finish().is_some() {
-                    first_chunk = Some(sent_at.elapsed());
+                if let Some(rest) = chunker.finish() {
+                    first_chunk.get_or_insert_with(|| sent_at.elapsed());
+                    spoken.push_str(&rest);
                 }
                 summary = Some(s);
                 break;
             }
         }
     }
+    drop(stream);
+    let answer = spoken.trim().to_owned();
     let tts = match first_sentence(&answer) {
         // A speech failure is recorded (no first word), not fatal.
         Some(sentence) => match first_audio(&*voice.tts, &mut voice.events, &sentence).await {
@@ -398,6 +430,8 @@ async fn ask(
         prompt_n: timings.as_ref().and_then(|t| t.prompt_n),
         tok_s: timings.as_ref().and_then(|t| t.predicted_per_second),
         finish_reason: summary.and_then(|s| s.finish_reason),
+        capped,
+        words: answer.split_whitespace().count(),
         correct,
         answer,
     })

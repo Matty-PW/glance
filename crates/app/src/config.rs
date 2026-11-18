@@ -19,6 +19,11 @@
 //! deep = "…"                          # optional second, larger model (DEEP)
 //! auto_escalate = false               # let FAST hand hard questions to DEEP by itself
 //! deep_idle_secs = 600                # unload an on-demand DEEP after this long unused
+//! response_length = "medium"          # short | medium | long, for FAST and DEEP:
+//!                                     # short: about 2 sentences; medium: the
+//!                                     # original answers (safety cap 8); long:
+//!                                     # no cap, more detail. "Walk me through" or
+//!                                     # "in detail" always lifts the cap.
 //! # Or use servers you run yourself (loopback only); these override fast/deep:
 //! # fast_endpoint = "http://127.0.0.1:8080/v1"
 //! # fast_model = "default"
@@ -89,6 +94,14 @@ pub struct ModelsConfig {
     pub auto_escalate: bool,
     /// Unload an on-demand DEEP after this many seconds unused.
     pub deep_idle_secs: u64,
+    /// short, medium or long (M5: a three-stop slider).
+    pub response_length: String,
+}
+
+impl ModelsConfig {
+    pub fn response_length(&self) -> glance_orchestrator::ResponseLength {
+        glance_orchestrator::ResponseLength::parse(&self.response_length).unwrap_or_default()
+    }
 }
 
 impl ModelsConfig {
@@ -138,6 +151,7 @@ impl Default for ModelsConfig {
             deep_mtp: true,
             auto_escalate: false,
             deep_idle_secs: 600,
+            response_length: "medium".into(),
         }
     }
 }
@@ -245,6 +259,12 @@ impl Config {
     pub fn parse(text: &str) -> Result<Self> {
         let config: Self = toml::from_str(text)?;
         config.speech.validate()?;
+        if glance_orchestrator::ResponseLength::parse(&config.models.response_length).is_none() {
+            bail!(
+                "models.response_length must be short, medium or long, got \"{}\"",
+                config.models.response_length
+            );
+        }
         if !["off", "low", "medium", "xhigh"].contains(&config.models.deep_effort.as_str()) {
             bail!(
                 "models.deep_effort must be off, low, medium or xhigh, got \"{}\"",
@@ -295,6 +315,12 @@ mod tests {
         assert_eq!(config.models.fast, "qwen3-vl-4b-instruct-q4km");
         assert!(config.models.deep.is_none() && config.models.fast_endpoint.is_none());
         assert!(!config.models.auto_escalate);
+        assert_eq!(
+            config.models.response_length(),
+            glance_orchestrator::ResponseLength::Medium
+        );
+        assert!(Config::parse("[models]\nresponse_length = \"short\"\n").is_ok());
+        assert!(Config::parse("[models]\nresponse_length = \"tiny\"\n").is_err());
         assert_eq!(config.hotkeys.think, "Ctrl+Opt+T");
         assert!(Config::parse("[hotkeys]\nthink = \"Ctrl+Opt+Y\"\n").is_ok());
         assert!(Config::parse("[hotkeys]\nthunk = \"x\"\n").is_err());

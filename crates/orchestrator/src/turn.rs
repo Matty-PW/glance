@@ -22,6 +22,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::task::{JoinError, JoinHandle};
 use tokio::time::Instant;
 
+use crate::length::{CONTINUE_PROMPT, ends_sentence, is_more};
 use crate::session::{Commit, Shot, Tier};
 use crate::workers::{MicWorker, Reply, SttWorker};
 use crate::{
@@ -35,6 +36,9 @@ const THINK_CUE: &str = "Let me think harder about that.";
 const LOADING_CUE: &str = "Loading the bigger model first.";
 /// Spoken while DEEP works and nothing else is being said.
 const NUDGE_CUE: &str = "Still thinking.";
+/// "Still thinking" is said at most this often per turn; then progress is
+/// only shown.
+const MAX_NUDGES: u8 = 2;
 
 /// How long a fixed error line may take to be spoken before giving up.
 const ERROR_LINE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -94,7 +98,11 @@ impl Shared {
             (Tier::Fast, true) => &self.config.escalation_prompt,
             (Tier::Fast, false) => &self.config.system_prompt,
         };
-        Message::system(prompt.clone())
+        let mut prompt = prompt.clone();
+        if let Some(hint) = self.config.response_length.hint() {
+            prompt.push_str(hint);
+        }
+        Message::system(prompt)
     }
 
     fn escalates(&self) -> bool {
@@ -294,6 +302,8 @@ pub(crate) struct Started {
     pub(crate) tap: bool,
     /// The last question and DEEP's history before it, for a re-ask.
     pub(crate) reask: Option<Reask>,
+    /// Whether DEEP gave the last answer ("tell me more" continues there).
+    pub(crate) last_deep: Option<bool>,
 }
 
 /// What a "think harder" re-ask needs: the original question and the
@@ -311,6 +321,8 @@ enum Route {
     Think(String),
     /// The last question again, to DEEP.
     Reask,
+    /// "Tell me more": continue the last answer, with the tier that gave it.
+    More(String),
 }
 
 /// The maintainer's rule: strip the trigger phrase; nothing left means
@@ -327,6 +339,8 @@ fn route(chord: Chord, transcript: Option<&str>, phrase: &str) -> Route {
         } else {
             Route::Think(rest)
         }
+    } else if is_more(text) {
+        Route::More(text.trim().to_owned())
     } else {
         Route::Fast(text.trim().to_owned())
     }
@@ -419,6 +433,7 @@ async fn run(
         history,
         deep_history,
         reask,
+        last_deep,
         ..
     } = started;
 
@@ -451,7 +466,11 @@ async fn run(
         report.stt = Some(stt_started.elapsed());
         Some(transcript.text)
     };
-    let route = route(chord, transcript.as_deref(), &shared.config.think_phrase);
+    let route = match route(chord, transcript.as_deref(), &shared.config.think_phrase) {
+        // Nothing to continue yet: an ordinary question.
+        Route::More(text) if last_deep.is_none() => Route::Fast(text),
+        route => route,
+    };
     match &route {
         Route::Fast(text) if text.is_empty() => return Err(TurnError::NoSpeech),
         Route::Think(_) | Route::Reask if shared.deep.is_none() => return Err(TurnError::NoDeep),
@@ -480,10 +499,11 @@ async fn run(
         .as_ref()
         .map(|shot| shot.for_tier(Tier::Deep).clone());
 
+    let length = shared.config.response_length;
     let mut speech = shared.speech.lock().await;
     drain(&mut speech);
     let mut voice = Voice::new(shared, key_up, notify);
-    let (question, answer, summary, replace_last) = match route {
+    let (question, answer, summary, replace_last, by_deep) = match route {
         Route::Fast(text) => {
             // FAST: image and question in one message (measured in M0).
             let mut parts = Vec::with_capacity(2);
@@ -494,14 +514,15 @@ async fn run(
             let mut request = shared.request(
                 Tier::Fast,
                 shared.messages(Tier::Fast, history, Message::user(parts)),
-                shared.config.max_tokens,
+                length.max_tokens(shared.config.max_tokens, &text),
             );
             if shared.config.grammar && shared.escalates() {
                 request.extra_body.insert("grammar".into(), json!(GRAMMAR));
             }
             let fast = shared.chat.chat(request).await?;
+            let cap = length.sentence_cap(&text);
             let ended = voice
-                .stream(&mut speech, fast, Some(EscalationGate::new()), report)
+                .stream(&mut speech, fast, Some(EscalationGate::new()), cap, report)
                 .await?;
             report.ttft = voice.times.ttft;
             report.first_chunk = voice.times.first_chunk;
@@ -509,7 +530,11 @@ async fn run(
                 Ended::Reply {
                     text: answer,
                     summary,
-                } => (text, answer, summary, false),
+                    capped,
+                } => {
+                    report.capped = capped;
+                    (text, answer, summary, false, false)
+                }
                 Ended::Signal(Decision::Escalate(reason)) if shared.escalates() => {
                     // One escalation per turn; DEEP's output is never gated.
                     report.escalation = Some(reason);
@@ -519,15 +544,58 @@ async fn run(
                         &mut speech,
                         report,
                         notify,
-                        filler(reason),
+                        Some(filler(reason)),
                         deep_history,
                         deep_image,
                         text.clone(),
                     )
                     .await?;
-                    (text, answer, summary, false)
+                    (text, answer, summary, false, true)
                 }
                 Ended::Signal(_) => return Err(TurnError::BadSignal),
+            }
+        }
+        Route::More(_) => {
+            // Continue from what was spoken (the session keeps only that),
+            // with the tier that gave the last answer.
+            report.more = true;
+            if last_deep == Some(true) && shared.deep.is_some() {
+                let (answer, summary) = deep_answer(
+                    shared,
+                    &mut voice,
+                    &mut speech,
+                    report,
+                    notify,
+                    None,
+                    deep_history,
+                    None,
+                    CONTINUE_PROMPT.to_owned(),
+                )
+                .await?;
+                (CONTINUE_PROMPT.to_owned(), answer, summary, false, true)
+            } else {
+                let request = shared.request(
+                    Tier::Fast,
+                    shared.messages(Tier::Fast, history, Message::user_text(CONTINUE_PROMPT)),
+                    length.max_tokens(shared.config.max_tokens, CONTINUE_PROMPT),
+                );
+                let fast = shared.chat.chat(request).await?;
+                let cap = length.sentence_cap(CONTINUE_PROMPT);
+                // A continuation never escalates, so no gate.
+                let ended = voice.stream(&mut speech, fast, None, cap, report).await?;
+                report.ttft = voice.times.ttft;
+                report.first_chunk = voice.times.first_chunk;
+                match ended {
+                    Ended::Reply {
+                        text,
+                        summary,
+                        capped,
+                    } => {
+                        report.capped = capped;
+                        (CONTINUE_PROMPT.to_owned(), text, summary, false, false)
+                    }
+                    Ended::Signal(_) => unreachable!("no gate"),
+                }
             }
         }
         Route::Think(text) => {
@@ -538,13 +606,13 @@ async fn run(
                 &mut speech,
                 report,
                 notify,
-                THINK_CUE,
+                Some(THINK_CUE),
                 deep_history,
                 deep_image,
                 text.clone(),
             )
             .await?;
-            (text, answer, summary, false)
+            (text, answer, summary, false, true)
         }
         Route::Reask => {
             report.think = Some("reask");
@@ -556,13 +624,13 @@ async fn run(
                 &mut speech,
                 report,
                 notify,
-                THINK_CUE,
+                Some(THINK_CUE),
                 history,
                 None,
                 question.clone(),
             )
             .await?;
-            (question, answer, summary, true)
+            (question, answer, summary, true, true)
         }
     };
     voice.finish(&mut speech, report).await?;
@@ -581,7 +649,41 @@ async fn run(
         answer: answer.trim().to_owned(),
         shot: if replace_last { None } else { prepared.shot },
         replace_last,
+        deep: by_deep,
     })
+}
+
+/// On a think-chord press: load DEEP if needed and prefill the history and
+/// screenshot a re-ask would use, while the user is still talking. The
+/// turn's own prefill then finds it cached (or waits for this load).
+pub(crate) async fn warm_deep(shared: Arc<Shared>, prefix: Option<Vec<Message>>) {
+    let Some(tier) = shared.deep.as_ref() else {
+        return;
+    };
+    let model = match tier.loaded() {
+        Some(model) => model,
+        None => {
+            shared.deep_status(DeepStatus::Loading);
+            match tier.load().await {
+                Ok(model) => {
+                    shared.deep_status(DeepStatus::Loaded);
+                    model
+                }
+                Err(_) => {
+                    // The turn retries and reports the error.
+                    shared.deep_status(DeepStatus::NotLoaded);
+                    return;
+                }
+            }
+        }
+    };
+    if let Some(prefix) = prefix {
+        let mut prefill = shared.request(Tier::Deep, shared.prefix(Tier::Deep, prefix), 1);
+        prefill
+            .extra_body
+            .insert("add_generation_prompt".into(), json!(false));
+        let _ = run_to_end(&*model, prefill).await;
+    }
 }
 
 /// Ask DEEP, loading it first if needed, with spoken and visible progress:
@@ -596,13 +698,15 @@ async fn deep_answer(
     speech: &mut UnboundedReceiver<SpeechEvent>,
     report: &mut TurnReport,
     notify: &Notifier<'_>,
-    cue: &str,
+    cue: Option<&str>,
     history: Vec<Message>,
     image: Option<Part>,
     question: String,
 ) -> Result<(String, Box<ChatSummary>), TurnError> {
     let tier = shared.deep.as_ref().ok_or(TurnError::NoDeep)?;
-    voice.say_cue(cue, Some(Mark::Filler))?;
+    if let Some(cue) = cue {
+        voice.say_cue(cue, Some(Mark::Filler))?;
+    }
     voice.nudge = Some(shared.config.deep_nudge);
     let model = match tier.loaded() {
         Some(model) => model,
@@ -641,20 +745,29 @@ async fn deep_answer(
     report.deep_prefill = Some(started.elapsed());
 
     notify.progress(Progress::ThinkingHarder);
+    let length = shared.config.response_length;
+    let cap = length.sentence_cap(&question);
     let request = shared.request(
         Tier::Deep,
-        shared.messages(Tier::Deep, prefix, Message::user_text(question)),
-        shared.config.deep_max_tokens,
+        shared.messages(Tier::Deep, prefix, Message::user_text(question.clone())),
+        length.max_tokens(shared.config.deep_max_tokens, &question),
     );
     voice.times = Times::default();
     voice.next_mark = Some(Mark::Deep);
     let stream = model.chat(request).await?;
-    let ended = voice.stream(speech, stream, None, report).await?;
+    let ended = voice.stream(speech, stream, None, cap, report).await?;
     voice.nudge = None;
     report.deep_ttft = voice.times.ttft;
     report.deep_thinking = voice.times.thinking();
     match ended {
-        Ended::Reply { text, summary } => Ok((text, summary)),
+        Ended::Reply {
+            text,
+            summary,
+            capped,
+        } => {
+            report.capped = capped;
+            Ok((text, summary))
+        }
         Ended::Signal(_) => unreachable!("DEEP is never gated"),
     }
 }
@@ -676,6 +789,8 @@ enum Ended {
     Reply {
         text: String,
         summary: Box<ChatSummary>,
+        /// Speech stopped at the sentence cap; `text` is what was spoken.
+        capped: bool,
     },
     /// The gate stopped the stream: escalate or invalid.
     Signal(Decision),
@@ -718,6 +833,7 @@ struct Voice<'a> {
     nudge: Option<Duration>,
     /// When the last utterance ended (or the turn's speech began).
     quiet_since: Instant,
+    nudges_left: u8,
 }
 
 impl<'a> Voice<'a> {
@@ -733,7 +849,19 @@ impl<'a> Voice<'a> {
             times: Times::default(),
             nudge: None,
             quiet_since: Instant::now(),
+            nudges_left: MAX_NUDGES,
         }
+    }
+
+    /// Say "Still thinking"; after the last one allowed, stop nudging
+    /// (progress stays visible in the tray and overlay).
+    fn nudge_now(&mut self) -> Result<(), TurnError> {
+        self.say_cue(NUDGE_CUE, None)?;
+        self.nudges_left = self.nudges_left.saturating_sub(1);
+        if self.nudges_left == 0 {
+            self.nudge = None;
+        }
+        Ok(())
     }
 
     /// A fixed cue line: queued like a sentence, but not counted as the
@@ -765,7 +893,7 @@ impl<'a> Voice<'a> {
             tokio::select! {
                 out = &mut work => return Ok(out),
                 event = speech.recv() => self.on_event(event, report)?,
-                () = sleep_until_opt(nudge) => self.say_cue(NUDGE_CUE, None)?,
+                () = sleep_until_opt(nudge) => self.nudge_now()?,
             }
         }
     }
@@ -834,10 +962,14 @@ impl<'a> Voice<'a> {
         speech: &mut UnboundedReceiver<SpeechEvent>,
         mut stream: ChatStream,
         mut gate: Option<EscalationGate>,
+        cap: Option<usize>,
         report: &mut TurnReport,
     ) -> Result<Ended, TurnError> {
         let mut chunker = SentenceChunker::new(ChunkerConfig::default());
         let mut text = String::new();
+        // What was spoken, and how many full sentences.
+        let mut spoken = String::new();
+        let mut sentences = 0;
         loop {
             let nudge = self.nudge_deadline();
             tokio::select! {
@@ -855,6 +987,21 @@ impl<'a> Voice<'a> {
                         text.push_str(&speakable);
                         for chunk in chunker.push(&speakable) {
                             self.say(&chunk)?;
+                            spoken.push_str(&chunk);
+                            spoken.push(' ');
+                            if ends_sentence(&chunk) {
+                                sentences += 1;
+                                // At the cap: stop at this sentence boundary
+                                // (dropping the stream cancels generation)
+                                // and keep only what was said.
+                                if cap == Some(sentences) {
+                                    return Ok(Ended::Reply {
+                                        text: spoken.trim_end().to_owned(),
+                                        summary: Box::default(),
+                                        capped: true,
+                                    });
+                                }
+                            }
                         }
                     }
                     // Thinking text is never spoken.
@@ -876,13 +1023,14 @@ impl<'a> Voice<'a> {
                         return Ok(Ended::Reply {
                             text,
                             summary: Box::new(summary),
+                            capped: false,
                         });
                     }
                     Some(Err(e)) => return Err(e.into()),
                     None => return Err(TurnError::Chat("the stream ended early".into())),
                 },
                 event = speech.recv() => self.on_event(event, report)?,
-                () = sleep_until_opt(nudge) => self.say_cue(NUDGE_CUE, None)?,
+                () = sleep_until_opt(nudge) => self.nudge_now()?,
             }
         }
     }

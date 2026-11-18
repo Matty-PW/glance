@@ -59,6 +59,8 @@ pub(crate) struct Commit {
     /// A "think harder" re-ask: DEEP's answer replaces the last answer
     /// instead of adding an exchange.
     pub(crate) replace_last: bool,
+    /// DEEP gave this answer ("tell me more" then continues with DEEP).
+    pub(crate) deep: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +77,7 @@ struct Exchange {
     question: String,
     answer: String,
     image: Image,
+    deep: bool,
 }
 
 /// A summary for the app, with no content.
@@ -109,6 +112,11 @@ impl Session {
 
     pub(crate) fn has_screenshot(&self) -> bool {
         self.shot.is_some()
+    }
+
+    /// Whether DEEP gave the last answer; `None` before any answer.
+    pub(crate) fn last_was_deep(&self) -> Option<bool> {
+        self.exchanges.last().map(|e| e.deep)
     }
 
     /// The messages that come before the new question (without the system
@@ -161,6 +169,7 @@ impl Session {
             && let Some(last) = self.exchanges.last_mut()
         {
             last.answer = commit.answer;
+            last.deep = commit.deep;
             return;
         }
         let image = match commit.shot {
@@ -179,6 +188,7 @@ impl Session {
             question: commit.question,
             answer: commit.answer,
             image,
+            deep: commit.deep,
         });
         while self.exchanges.len() > max.max(1) {
             let dropped = self.exchanges.remove(0);
@@ -226,6 +236,7 @@ mod tests {
             answer: format!("answer to {q}"),
             shot,
             replace_last: false,
+            deep: false,
         }
     }
 
@@ -327,6 +338,7 @@ mod tests {
                 answer: "deep answer".into(),
                 shot: None,
                 replace_last: true,
+                deep: true,
             },
             12,
         );

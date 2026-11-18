@@ -79,6 +79,12 @@ pub struct Args {
     /// Only the first N hard questions.
     #[arg(long)]
     limit: Option<usize>,
+    /// Only these eval scenes (e.g. sheet,chart).
+    #[arg(long, value_delimiter = ',')]
+    scenes: Vec<String>,
+    /// response_length: short, medium (the default) or long.
+    #[arg(long, default_value = "medium")]
+    length: String,
     /// Write every answer and timing here as JSON.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -113,6 +119,7 @@ struct DeepRun {
     /// then the question to its first sentence sounding).
     cold_first_word_ms: Option<f64>,
     answer_words: usize,
+    capped: bool,
     prewarm_ms: f64,
     prewarm_prompt_n: Option<u64>,
     /// Request to first thinking token (prompt evaluation of the question).
@@ -158,6 +165,11 @@ pub async fn run(args: Args) -> Result<()> {
                 .map(|q| (s.name.clone(), q.ask.clone()))
         })
         .collect();
+    if !args.scenes.is_empty() {
+        questions.retain(|(scene, _)| args.scenes.contains(scene));
+    }
+    let length = glance_orchestrator::ResponseLength::parse(&args.length)
+        .context("--length: short, medium or long")?;
     if let Some(n) = args.limit {
         questions.truncate(n);
     }
@@ -290,7 +302,11 @@ pub async fn run(args: Args) -> Result<()> {
                 json!({"reasoning_effort": effort})
             };
             let body = json!({"cache_prompt": true, "chat_template_kwargs": kwargs});
-            let system = Message::system(DEEP_SYSTEM_PROMPT);
+            let mut prompt = DEEP_SYSTEM_PROMPT.to_owned();
+            if let Some(hint) = length.hint() {
+                prompt.push_str(hint);
+            }
+            let system = Message::system(prompt);
             let image_message = Message::user(vec![deep_image.clone()]);
             let mut warm_body = body.clone();
             if args.split_prewarm {
@@ -318,7 +334,13 @@ pub async fn run(args: Args) -> Result<()> {
             };
             let mut run = deep_once(
                 &deep_client,
-                req(question, args.deep_max_tokens, &body, false),
+                req(
+                    question,
+                    length.max_tokens(args.deep_max_tokens, ask),
+                    &body,
+                    false,
+                ),
+                length.sentence_cap(ask),
             )
             .await?;
             run.scene = scene.clone();
@@ -457,12 +479,17 @@ pub(super) async fn run_to_end(client: &OpenAiClient, request: ChatRequest) -> R
 }
 
 /// One DEEP question, timing thinking and answer separately.
-async fn deep_once(client: &OpenAiClient, request: ChatRequest) -> Result<DeepRun> {
+async fn deep_once(
+    client: &OpenAiClient,
+    request: ChatRequest,
+    cap: Option<usize>,
+) -> Result<DeepRun> {
     let started = Instant::now();
     let mut stream = client.chat(request).await?;
     let mut run = DeepRun::default();
     let (mut first_thinking, mut first_answer, mut first_sentence) = (None, None, None);
     let mut chunker = SentenceChunker::new(ChunkerConfig::default());
+    let mut sentences = 0;
     while let Some(event) = stream.next().await {
         match event? {
             ChatEvent::Reasoning(delta) => {
@@ -471,14 +498,30 @@ async fn deep_once(client: &OpenAiClient, request: ChatRequest) -> Result<DeepRu
             }
             ChatEvent::Content(delta) => {
                 first_answer.get_or_insert_with(|| started.elapsed());
-                run.answer.push_str(&delta);
-                if first_sentence.is_none() && !chunker.push(&delta).is_empty() {
-                    first_sentence = Some(started.elapsed());
+                // As the app does: stop at the sentence cap, keep what was
+                // spoken.
+                let mut at_cap = false;
+                for chunk in chunker.push(&delta) {
+                    first_sentence.get_or_insert_with(|| started.elapsed());
+                    run.answer.push_str(&chunk);
+                    run.answer.push(' ');
+                    if glance_orchestrator::length::ends_sentence(&chunk) {
+                        sentences += 1;
+                        at_cap = cap == Some(sentences);
+                        if at_cap {
+                            break;
+                        }
+                    }
+                }
+                if at_cap {
+                    run.capped = true;
+                    break;
                 }
             }
             ChatEvent::Done(summary) => {
-                if first_sentence.is_none() && chunker.finish().is_some() {
-                    first_sentence = Some(started.elapsed());
+                if let Some(rest) = chunker.finish() {
+                    first_sentence.get_or_insert_with(|| started.elapsed());
+                    run.answer.push_str(&rest);
                 }
                 if let Some(t) = summary.timings {
                     run.cache_n = t.cache_n;

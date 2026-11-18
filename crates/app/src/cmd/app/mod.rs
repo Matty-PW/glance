@@ -264,6 +264,7 @@ async fn start(
         grammar: fast.grammar,
         deep_extra_body: deep_body,
         auto_escalate: models.auto_escalate,
+        response_length: models.response_length(),
         deep_idle: std::time::Duration::from_secs(models.deep_idle_secs),
         ..Default::default()
     };

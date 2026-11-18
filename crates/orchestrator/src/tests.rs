@@ -143,9 +143,10 @@ impl ChatModel for MockChat {
             .collect();
         let prewarm = request.max_tokens == Some(1);
         let system = match request.messages.first().and_then(|m| m.parts.first()) {
-            Some(Part::Text(t)) if t == crate::ESCALATION_SYSTEM_PROMPT => "escalation",
-            Some(Part::Text(t)) if t == crate::DEEP_SYSTEM_PROMPT => "deep",
-            Some(Part::Text(t)) if t == crate::SPOKEN_SYSTEM_PROMPT => "plain",
+            // A length hint may follow the prompt.
+            Some(Part::Text(t)) if t.starts_with(crate::ESCALATION_SYSTEM_PROMPT) => "escalation",
+            Some(Part::Text(t)) if t.starts_with(crate::DEEP_SYSTEM_PROMPT) => "deep",
+            Some(Part::Text(t)) if t.starts_with(crate::SPOKEN_SYSTEM_PROMPT) => "plain",
             _ => "other",
         };
         let generation_prompt = request
@@ -236,6 +237,8 @@ struct MockDeep {
     loads: AtomicUsize,
     unloads: AtomicUsize,
     load_delay: Duration,
+    /// One load at a time, as the app's OnDemandDeep does.
+    loading: tokio::sync::Mutex<()>,
 }
 
 impl DeepTier for MockDeep {
@@ -247,6 +250,10 @@ impl DeepTier for MockDeep {
 
     fn load(&self) -> LoadFuture<'_> {
         Box::pin(async move {
+            let _one = self.loading.lock().await;
+            if let Some(model) = self.loaded() {
+                return Ok(model);
+            }
             tokio::time::sleep(self.load_delay).await;
             self.loads.fetch_add(1, Ordering::SeqCst);
             self.loaded.store(true, Ordering::SeqCst);
@@ -346,6 +353,7 @@ impl Harness {
                 loads: AtomicUsize::new(0),
                 unloads: AtomicUsize::new(0),
                 load_delay: setup.deep_load_delay,
+                loading: tokio::sync::Mutex::new(()),
             })
         });
         let tts_log = Arc::new(TtsLog::default());
@@ -1042,10 +1050,13 @@ const DEEP_SAYS: &str = "It is seven.";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_think_tap_re_asks_the_last_question_with_deep_loading_it_first() {
-    let mut h = Harness::new(on_demand(
+    let mut setup = on_demand(
         vec!["what is the total", "and per month"],
         reply(&[DEEP_SAYS]),
-    ));
+    );
+    // Loading starts at the press and is still going when the turn asks.
+    setup.deep_load_delay = Duration::from_millis(300);
+    let mut h = Harness::new(setup);
     h.ask(Chord::Talk).await;
     h.hold(Chord::Think, 20).await; // a tap
     let updates = h.until_idle().await;
@@ -1204,13 +1215,123 @@ async fn deep_unloads_after_the_idle_time_and_reloads_when_asked_again() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_long_silence_while_deep_works_gets_a_still_thinking() {
     let mut setup = on_demand(vec!["what is the total"], reply(&[DEEP_SAYS]));
-    setup.deep_load_delay = Duration::from_millis(400);
+    setup.deep_load_delay = Duration::from_millis(800);
     setup.config.deep_nudge = Duration::from_millis(100);
     let mut h = Harness::new(setup);
     h.ask(Chord::Talk).await;
     h.hold(Chord::Think, 20).await;
     h.until_idle().await;
     let spoken = h.spoken();
-    assert!(spoken.iter().any(|s| s == "Still thinking."), "{spoken:?}");
+    let nudges = spoken.iter().filter(|s| *s == "Still thinking.").count();
+    // At most twice, then only the tray and overlay show progress.
+    assert!((1..=2).contains(&nudges), "{spoken:?}");
     assert_eq!(spoken.last().unwrap(), DEEP_SAYS);
+}
+
+// ---- response length --------------------------------------------------------
+
+fn sentences(n: usize) -> Vec<ChatEvent> {
+    let pieces: Vec<String> = (1..=n).map(|i| format!("Sentence number {i}. ")).collect();
+    let refs: Vec<&str> = pieces.iter().map(String::as_str).collect();
+    reply(&refs)
+}
+
+fn with_length(length: crate::ResponseLength, transcripts: Vec<&'static str>, n: usize) -> Setup {
+    Setup {
+        transcripts,
+        reply: sentences(n),
+        config: TurnConfig {
+            min_press: Duration::from_millis(100),
+            response_length: length,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn short_stops_after_two_sentences_and_keeps_only_what_was_said() {
+    use crate::ResponseLength::Short;
+    let mut h = Harness::new(with_length(Short, vec!["what is this", "tell me more"], 5));
+    let updates = h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken(), ["Sentence number 1.", "Sentence number 2."]);
+    let report = &reports(&updates)[0];
+    assert!(report.capped && report.to_string().contains("capped=1"));
+    // The short hint is in the prompt.
+    assert_eq!(h.questions()[0].system, "plain");
+
+    // "Tell me more" continues from the spoken text.
+    let updates = h.ask(Chord::Talk).await;
+    assert!(reports(&updates)[0].more);
+    assert_eq!(
+        h.questions().last().unwrap().layout,
+        [
+            "U:img1+what is this".to_owned(),
+            a("Sentence number 1. Sentence number 2."),
+            format!("U:{}", crate::length::CONTINUE_PROMPT)
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn medium_has_only_a_safety_cap_and_long_has_none() {
+    use crate::ResponseLength::{Long, Medium};
+    let mut h = Harness::new(with_length(Medium, vec!["what is this"], 10));
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken().len(), crate::length::MEDIUM_CAP);
+    assert_eq!(h.questions()[0].max_tokens, Some(200));
+
+    let mut h = Harness::new(with_length(Long, vec!["what is this"], 10));
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken().len(), 10);
+    assert_eq!(h.questions()[0].max_tokens, Some(600));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_explicit_walkthrough_lifts_the_cap_even_when_short() {
+    use crate::ResponseLength::Short;
+    let mut h = Harness::new(with_length(
+        Short,
+        vec!["Walk me through how to fix this, step by step."],
+        5,
+    ));
+    let updates = h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken().len(), 5);
+    assert!(!reports(&updates)[0].capped);
+    assert_eq!(h.questions()[0].max_tokens, Some(600));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tell_me_more_after_deep_continues_with_deep() {
+    let mut h = Harness::new(on_demand(
+        vec!["what is the total", "Think harder.", "Go on."],
+        reply(&[DEEP_SAYS]),
+    ));
+    h.ask(Chord::Talk).await;
+    h.ask(Chord::Talk).await;
+    let updates = h.ask(Chord::Talk).await;
+    assert!(reports(&updates)[0].more);
+    let last = deep_questions(&h).last().unwrap().layout.clone();
+    assert_eq!(
+        last,
+        [
+            "U:img1".to_owned(),
+            "U:what is the total".to_owned(),
+            a(DEEP_SAYS),
+            format!("U:{}", crate::length::CONTINUE_PROMPT)
+        ]
+    );
+    // FAST answered only the first question.
+    assert_eq!(h.questions().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tell_me_more_with_nothing_to_continue_is_an_ordinary_question() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["Tell me more."],
+        ..Default::default()
+    });
+    let updates = h.ask(Chord::Talk).await;
+    assert!(!reports(&updates)[0].more);
+    assert_eq!(h.questions()[0].layout, ["U:img1+Tell me more."]);
 }

@@ -162,6 +162,10 @@ pub struct TurnReport {
     pub escalation: Option<Reason>,
     /// A "think harder" turn: "reask" or "new".
     pub think: Option<&'static str>,
+    /// "Tell me more": the last answer was continued.
+    pub more: bool,
+    /// Speech stopped at the sentence cap (`response_length`).
+    pub capped: bool,
     /// Loading DEEP (only when it was not loaded).
     pub deep_load: Option<Duration>,
     /// DEEP processing history and image before the question.
@@ -203,6 +207,8 @@ impl TurnReport {
             total: None,
             escalation: None,
             think: None,
+            more: false,
+            capped: false,
             deep_load: None,
             deep_prefill: None,
             deep_thinking: None,
@@ -239,6 +245,12 @@ impl fmt::Display for TurnReport {
         }
         if let Some(kind) = self.think {
             write!(f, " think={kind}")?;
+        }
+        if self.more {
+            write!(f, " more=1")?;
+        }
+        if self.capped {
+            write!(f, " capped=1")?;
         }
         let times = [
             ("ttfa_ms", self.ttfa),
