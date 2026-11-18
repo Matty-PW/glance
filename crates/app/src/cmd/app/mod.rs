@@ -1,40 +1,31 @@
 //! `glance app`: the menu-bar app. Hold a chord, ask about the screen, hear
 //! the answer.
 //!
-//! Threads (`docs/DESIGN.md` §2):
-//! - The main thread runs `NSApplication` with the Accessory policy (no Dock
-//!   icon). The same run loop delivers hotkey events, tray clicks, and the
-//!   system voice's callbacks.
-//! - The tokio runtime runs the orchestrator. Tray changes go back to the
-//!   main thread through the main dispatch queue, because AppKit objects may
-//!   only be touched there.
+//! This file is the portable part: models, speech and the orchestrator,
+//! talking to the user through the `Shell` trait. The platform part (the
+//! main-thread run loop, hotkeys, menu-bar icon) is `glance_macos::shell`.
+//! The tokio runtime runs the orchestrator beside the main thread.
 
-mod hotkeys;
 mod tiers;
-mod tray;
 
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use anyhow::{Context, Result};
-use dispatch2::DispatchQueue;
 use glance_audio::Microphone;
-use glance_capture::live::{LiveScreen, request_screen_recording, screen_recording_granted};
 use glance_llm_client::{Endpoint, OpenAiClient};
+use glance_macos::capture::LiveScreen;
+use glance_macos::hotkeys::Chords;
 use glance_orchestrator::{
-    Controller, DeepStatus, DeepTier, Orchestrator, Outcome, Parts, Resident, TurnConfig,
+    Controller, DeepStatus, DeepTier, Orchestrator, Outcome, Parts, Resident, Shell, TurnConfig,
     TurnReport, TurnState, Update,
 };
 use glance_stt::Parakeet;
-use objc2::MainThreadMarker;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
-use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::speech::{self, SpeechArgs};
 use super::{find_model, manifest, store};
 use crate::config::{Config, ModelsConfig, SpeechConfig};
 use tiers::Source;
-use tray::View;
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -68,7 +59,6 @@ pub struct Args {
 }
 
 pub fn run(args: Args) -> Result<()> {
-    let mtm = MainThreadMarker::new().context("glance app must run on the main thread")?;
     // Read the config file now, so a mistake in it (or a bad endpoint)
     // stops the launch with a message instead of surfacing later.
     let settings = args.speech.settings()?;
@@ -113,53 +103,30 @@ pub fn run(args: Args) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-
-    let app = NSApplication::sharedApplication(mtm);
-    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
-
-    // Hotkeys first: if a chord cannot be registered, say which and do not
-    // run the pipeline, so glance never sits there without a working chord.
-    let (keys, key_events) = unbounded_channel();
-    let registered = hotkeys::register(keys, &config_file.hotkeys);
     let model_line = format!(
         "FAST: {} · DEEP: {}",
         fast.label(),
         deep.as_ref().map_or("none".to_owned(), Source::label)
     );
-
-    // The tray may only be created once the run loop is running; the main
-    // queue runs this block as soon as it is.
-    let tray_model_line = model_line.clone();
-    DispatchQueue::main().exec_async(move || tray::install(&tray_model_line));
-
-    let _hotkeys = match registered {
-        Ok(hotkeys) => {
-            let labels = hotkeys::labels();
-            eprintln!(
-                "glance: chords registered: {} (talk), {} (look), {} (think harder)",
-                labels.talk, labels.look, labels.think
-            );
-            runtime.spawn(start(args, models, settings, fast, deep, key_events));
-            Some(hotkeys)
-        }
-        Err(message) => {
-            eprintln!("glance: error: {message}");
-            show(View::error(format!("Hotkey error: {message}")));
-            None
-        }
+    let chords = Chords {
+        talk: config_file.hotkeys.talk.clone(),
+        look: config_file.hotkeys.look.clone(),
+        think: config_file.hotkeys.think.clone(),
     };
-
-    // Screen Recording: ask at launch rather than at the first question.
-    // macOS shows its prompt once; a grant needs a relaunch to take effect.
-    if !screen_recording_granted() {
-        eprintln!("glance: Screen Recording is not granted; asking (relaunch after granting)");
-        request_screen_recording();
-    }
-    runtime.spawn(refresh_tray());
-
-    eprintln!("glance: running ({model_line}). Quit from the menu-bar icon.");
-    app.run();
-    Ok(())
+    let options = glance_macos::shell::Options {
+        chords,
+        model_line,
+        on_quit: Box::new(tiers::shutdown),
+        on_new_session: Box::new(new_session),
+    };
+    let handle = runtime.handle().clone();
+    glance_macos::shell::run(options, move |key_events, shell| {
+        // No key events: a chord did not register; the shell shows why.
+        if let Some(key_events) = key_events {
+            handle.spawn(start(args, models, settings, fast, deep, key_events, shell));
+        }
+    })
+    .map_err(anyhow::Error::msg)
 }
 
 /// Load the speech model, build the pipeline, then run turns until exit.
@@ -170,8 +137,13 @@ async fn start(
     fast: Source,
     deep: Option<Source>,
     key_events: UnboundedReceiver<glance_orchestrator::HotkeyEvent>,
+    shell: Arc<dyn Shell>,
 ) {
-    show(View::status("Starting the models…"));
+    shell.status("Starting the models…");
+    let fail = |message: String| {
+        eprintln!("glance: error: {message}");
+        shell.fatal(&message);
+    };
     // FAST loads while speech loads; DEEP waits until it is asked for.
     let fast = tokio::spawn(tiers::start(fast));
     let stt_id = args.stt.clone();
@@ -222,7 +194,8 @@ async fn start(
             if models.auto_escalate {
                 // FAST may escalate at any time: load DEEP now.
                 let loading = Arc::clone(&deep);
-                show(View::deep(DeepStatus::Loading));
+                shell.update(&Update::Deep(DeepStatus::Loading));
+                let status_shell = Arc::clone(&shell);
                 tokio::spawn(async move {
                     let status = match loading.load().await {
                         Ok(_) => DeepStatus::Loaded,
@@ -231,14 +204,14 @@ async fn start(
                             DeepStatus::NotLoaded
                         }
                     };
-                    show(View::deep(status));
+                    status_shell.update(&Update::Deep(status));
                 });
             }
             Some(deep)
         }
     };
     if deep.is_some() {
-        show(View::deep(DeepStatus::NotLoaded));
+        shell.update(&Update::Deep(DeepStatus::NotLoaded));
     }
     let deep_max_edge = TurnConfig::default().deep_max_edge;
     let mut deep_body = TurnConfig::default().deep_extra_body;
@@ -270,18 +243,10 @@ async fn start(
     };
     let (orchestrator, updates) = Orchestrator::new(parts, config);
     let _ = CONTROLLER.set(orchestrator.controller());
-    tokio::spawn(forward_updates(updates));
-    show(View::state(TurnState::Idle));
+    tokio::spawn(forward_updates(updates, Arc::clone(&shell)));
+    shell.update(&Update::State(TurnState::Idle));
     eprintln!("glance: ready");
     orchestrator.run(key_events).await;
-}
-
-/// Quit: stop the servers glance started, then the app.
-fn quit() {
-    tiers::shutdown();
-    if let Some(mtm) = MainThreadMarker::new() {
-        NSApplication::sharedApplication(mtm).terminate(None);
-    }
 }
 
 /// Set once the pipeline is running; the tray's "New session" uses it.
@@ -294,31 +259,15 @@ fn new_session() {
     }
 }
 
-fn fail(message: String) {
-    eprintln!("glance: error: {message}");
-    show(View::error(message));
-}
-
-/// Turn orchestrator updates into tray changes and log lines.
-async fn forward_updates(mut updates: UnboundedReceiver<Update>) {
+/// Orchestrator updates to the shell, plus the per-turn log line.
+async fn forward_updates(mut updates: UnboundedReceiver<Update>, shell: Arc<dyn Shell>) {
     while let Some(update) = updates.recv().await {
-        match update {
-            Update::State(state) => show(View::state(state)),
-            Update::Report(report) => {
-                log_report(&report);
-                if let Outcome::Failed(error) = &report.outcome {
-                    show(View::turn_failed(error.to_string()));
-                }
-            }
-            Update::Progress(progress) => show(View::progress(progress)),
-            Update::Deep(status) => show(View::deep(status)),
-            Update::Session(info) => {
-                if info.questions == 0 {
-                    eprintln!("glance: session ended");
-                }
-                show(View::session(info));
-            }
+        match &update {
+            Update::Report(report) => log_report(report),
+            Update::Session(info) if info.questions == 0 => eprintln!("glance: session ended"),
+            _ => {}
         }
+        shell.update(&update);
     }
 }
 
@@ -329,19 +278,4 @@ fn log_report(report: &TurnReport) {
     if let Outcome::Failed(error) = &report.outcome {
         eprintln!("glance: turn {} failed: {error}", report.turn);
     }
-}
-
-/// Permissions can change in System Settings at any time, and the
-/// screenshot's age moves on: refresh both every few seconds.
-async fn refresh_tray() {
-    let mut tick = tokio::time::interval(Duration::from_secs(3));
-    loop {
-        tick.tick().await;
-        DispatchQueue::main().exec_async(tray::refresh);
-    }
-}
-
-/// Apply a tray change on the main thread.
-fn show(view: View) {
-    DispatchQueue::main().exec_async(move || tray::apply(view));
 }

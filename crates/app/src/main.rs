@@ -82,14 +82,14 @@ fn main() -> anyhow::Result<()> {
             // threads while this (main) thread keeps the run loop turning.
             let runtime = runtime()?;
             let task = runtime.spawn(cmd::spike::run(args));
-            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            glance_macos::system_voice::run_main_loop_until(|| task.is_finished());
             runtime.block_on(task)?
         }
         Command::TtsBench(args) => {
             // The system voice reports on the main run loop (see Spike).
             let runtime = runtime()?;
             let task = runtime.spawn(cmd::tts_bench::run(args));
-            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            glance_macos::system_voice::run_main_loop_until(|| task.is_finished());
             runtime.block_on(task)?
         }
         Command::Models { action } => runtime()?.block_on(cmd::models::run(action)),
@@ -99,14 +99,14 @@ fn main() -> anyhow::Result<()> {
             // Speaks (at volume 0) to time the voice; see Spike.
             let runtime = runtime()?;
             let task = runtime.spawn(cmd::fast_bench::run(args));
-            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            glance_macos::system_voice::run_main_loop_until(|| task.is_finished());
             runtime.block_on(task)?
         }
         Command::DeepBench(args) => {
             // Speaks (at volume 0) to time the voice; see Spike.
             let runtime = runtime()?;
             let task = runtime.spawn(cmd::deep_bench::run(args));
-            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            glance_macos::system_voice::run_main_loop_until(|| task.is_finished());
             runtime.block_on(task)?
         }
         Command::Bench(args) => runtime()?.block_on(cmd::bench::run(args)),

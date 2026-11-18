@@ -25,8 +25,4 @@ toml.workspace = true
 glance-tts.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-dispatch2.workspace = true
-global-hotkey.workspace = true
-objc2.workspace = true
-objc2-app-kit.workspace = true
-tray-icon.workspace = true
+glance-macos.workspace = true

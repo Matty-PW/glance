@@ -1,15 +1,29 @@
-//! Microphone permission status, read from AVFoundation.
+//! Screen Recording and Microphone permissions (`docs/DESIGN.md` §10).
 //!
-//! This never shows a prompt. macOS asks by itself the first time a
-//! microphone stream opens, which in glance is the first chord press
-//! (`docs/DESIGN.md` §10). Until access is granted the device delivers
-//! silence, which [`crate::AudioClip::is_silent`] detects.
+//! Screen Recording: CoreGraphics preflight (no prompt) and request (the
+//! prompt, shown once). Microphone: status only, from AVFoundation. macOS
+//! asks by itself the first time a microphone stream opens, which in glance
+//! is the first chord press; until access is granted the device delivers
+//! silence, which `glance_audio::AudioClip::is_silent` detects.
 //!
-//! The only `unsafe` in this crate: reading an AVFoundation constant and
-//! calling one class method through the generated bindings.
+//! `unsafe` here: reading an AVFoundation constant and calling one class
+//! method through the generated bindings.
 #![allow(unsafe_code)]
 
 use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
+use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
+
+/// Whether this process may capture the screen. Never shows a prompt.
+pub fn screen_recording_granted() -> bool {
+    CGPreflightScreenCaptureAccess()
+}
+
+/// Ask for Screen Recording permission. macOS shows its prompt only the
+/// first time; after that this just reports the current state. A grant
+/// usually takes effect only after the app is relaunched.
+pub fn request_screen_recording() -> bool {
+    CGRequestScreenCaptureAccess()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicPermission {

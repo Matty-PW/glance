@@ -9,8 +9,6 @@
 
 mod mic;
 mod output;
-#[cfg(target_os = "macos")]
-pub mod permission;
 mod resample;
 
 use std::fmt;

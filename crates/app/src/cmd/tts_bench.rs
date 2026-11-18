@@ -16,11 +16,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use glance_macos::system_voice::{SystemVoice, SystemVoiceConfig};
 use glance_tts::kokoro::{
     Accent, KokoroConfig, KokoroModel, KokoroVoice, Misaki, Phonemizer, SAMPLE_RATE, VoiceChoice,
     load_voice,
 };
-use glance_tts::system_voice::{SystemVoice, SystemVoiceConfig};
 use glance_tts::{SpeechEvent, TextToSpeech, UtteranceId};
 
 use tokio::sync::mpsc::UnboundedReceiver;

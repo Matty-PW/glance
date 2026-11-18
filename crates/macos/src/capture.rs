@@ -6,15 +6,15 @@
 //! The pixels stay in memory.
 
 use objc2_app_kit::NSWorkspace;
-use objc2_core_graphics::{
-    CGMainDisplayID, CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess,
-};
+use objc2_core_graphics::CGMainDisplayID;
 use screencapturekit::prelude::{
     CGRect, SCContentFilter, SCShareableContent, SCStreamConfiguration,
 };
 use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
 
-use crate::{CaptureError, ScreenCapture, Screenshot, fit_within};
+use glance_capture::{CaptureError, ScreenCapture, Screenshot, fit_within};
+
+use crate::permission::screen_recording_granted;
 
 /// Captures the active display at up to `max_edge` pixels on the long side.
 #[derive(Debug, Clone, Copy)]
@@ -28,18 +28,6 @@ impl LiveScreen {
     pub fn new(max_edge: u32) -> Self {
         Self { max_edge }
     }
-}
-
-/// Whether this process may capture the screen. Never shows a prompt.
-pub fn screen_recording_granted() -> bool {
-    CGPreflightScreenCaptureAccess()
-}
-
-/// Ask for Screen Recording permission. macOS shows its prompt only the
-/// first time; after that this just reports the current state. A grant
-/// usually takes effect only after the app is relaunched.
-pub fn request_screen_recording() -> bool {
-    CGRequestScreenCaptureAccess()
 }
 
 impl ScreenCapture for LiveScreen {

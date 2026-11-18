@@ -1,8 +1,9 @@
 //! Screen capture behind the [`ScreenCapture`] trait.
 //!
-//! Two sources: [`live::LiveScreen`] captures the active display through
-//! ScreenCaptureKit (macOS), and [`PngFile`] reads a PNG supplied on the
-//! command line for the CLI spikes.
+//! Implementations: live capture of the active display lives in the
+//! platform crate (`glance-macos`, ScreenCaptureKit); [`PngFile`] reads a PNG
+//! supplied on the command line for the CLI spikes. This crate holds no
+//! platform code.
 //!
 //! Screenshots are held in opaque in-memory types: no `Serialize`, no
 //! `Display`, and a `Debug` that prints only dimensions and sizes, so pixels
@@ -38,9 +39,6 @@ pub enum CaptureError {
     #[error("screen capture failed: {0}")]
     Capture(String),
 }
-
-#[cfg(target_os = "macos")]
-pub mod live;
 
 /// A source of screenshots.
 pub trait ScreenCapture: Send + Sync {

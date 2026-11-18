@@ -8,3 +8,6 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+glance-macos.workspace = true

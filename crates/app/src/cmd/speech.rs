@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use glance_macos::system_voice::{SystemVoice, SystemVoiceConfig, installed_voices};
 use glance_tts::kokoro::{KokoroConfig, KokoroVoice, VoiceChoice};
-use glance_tts::system_voice::{SystemVoice, SystemVoiceConfig, installed_voices};
 use glance_tts::{SpeechEvent, TextToSpeech};
 use tokio::sync::mpsc::UnboundedReceiver;
 

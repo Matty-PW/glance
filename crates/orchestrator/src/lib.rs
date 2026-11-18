@@ -191,6 +191,18 @@ pub enum Update {
     Deep(DeepStatus),
 }
 
+/// What the user sees and acts on: the menu-bar icon, the overlay, the
+/// settings window. A platform crate implements it (`glance-macos`); no UI
+/// toolkit type ever reaches the core crates. Called from any thread.
+pub trait Shell: Send + Sync {
+    /// A status line while glance starts ("Loading the speech models…").
+    fn status(&self, text: &str);
+    /// glance cannot work (a model did not load); shown until quit.
+    fn fatal(&self, text: &str);
+    /// An orchestrator update.
+    fn update(&self, update: &Update);
+}
+
 /// Per-turn settings.
 #[derive(Debug, Clone)]
 pub struct TurnConfig {

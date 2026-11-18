@@ -13,7 +13,4 @@ workspace = true
 image.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit.workspace = true
-objc2-core-graphics.workspace = true
-screencapturekit.workspace = true
+

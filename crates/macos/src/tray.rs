@@ -8,14 +8,13 @@
 
 use std::cell::RefCell;
 
+use crate::permission::{MicPermission, microphone_permission, screen_recording_granted};
 use dispatch2::DispatchQueue;
-use glance_audio::permission::{MicPermission, microphone_permission};
-use glance_capture::live::screen_recording_granted;
 use glance_orchestrator::{DeepStatus, Progress, SessionInfo, TurnState};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use super::hotkeys;
+use crate::hotkeys;
 
 const SCREEN_SETTINGS: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
@@ -298,8 +297,8 @@ fn on_menu(id: &str) {
     match id {
         ID_SCREEN => open_settings(SCREEN_SETTINGS),
         ID_MIC => open_settings(MIC_SETTINGS),
-        ID_NEW_SESSION => super::new_session(),
-        ID_QUIT => DispatchQueue::main().exec_async(super::quit),
+        ID_NEW_SESSION => crate::shell::new_session(),
+        ID_QUIT => DispatchQueue::main().exec_async(crate::shell::quit),
         _ => {}
     }
 }

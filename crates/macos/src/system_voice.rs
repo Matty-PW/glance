@@ -13,8 +13,8 @@
 //!   arrives. So the process must keep its main run loop turning. The app
 //!   does that anyway from M2; the CLI uses [`run_main_loop_until`].
 //!
-//! This module is the only place in the crate that needs `unsafe`: every call
-//! into the generated Objective-C bindings is an `unsafe fn`.
+//! `unsafe` here: every call into the generated Objective-C bindings is an
+//! `unsafe fn`.
 #![allow(unsafe_code)]
 
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ use objc2_avf_audio::{
 use objc2_foundation::{NSDate, NSDefaultRunLoopMode, NSRunLoop, NSString};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::{SpeechEvent, TextToSpeech, TtsError, UtteranceId};
+use glance_tts::{SpeechEvent, TextToSpeech, TtsError, UtteranceId};
 
 /// Settings for the system voice.
 #[derive(Debug, Clone)]

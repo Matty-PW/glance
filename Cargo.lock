@@ -786,22 +786,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "dispatch2",
  "glance-audio",
  "glance-capture",
  "glance-llm-client",
+ "glance-macos",
  "glance-models",
  "glance-orchestrator",
  "glance-stt",
  "glance-tts",
- "global-hotkey",
- "objc2",
- "objc2-app-kit",
  "serde",
  "serde_json",
  "tokio",
  "toml",
- "tray-icon",
 ]
 
 [[package]]
@@ -809,7 +805,6 @@ name = "glance-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
- "objc2-av-foundation",
  "rubato",
  "thiserror 2.0.21",
 ]
@@ -819,9 +814,6 @@ name = "glance-capture"
 version = "0.1.0"
 dependencies = [
  "image",
- "objc2-app-kit",
- "objc2-core-graphics",
- "screencapturekit",
  "thiserror 2.0.21",
 ]
 
@@ -835,6 +827,27 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "glance-macos"
+version = "0.1.0"
+dependencies = [
+ "dispatch2",
+ "glance-capture",
+ "glance-orchestrator",
+ "glance-tts",
+ "global-hotkey",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-av-foundation",
+ "objc2-avf-audio",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "screencapturekit",
+ "thiserror 2.0.21",
+ "tokio",
+ "tray-icon",
 ]
 
 [[package]]
@@ -879,9 +892,6 @@ version = "0.1.0"
 dependencies = [
  "glance-audio",
  "misaki-rs",
- "objc2",
- "objc2-avf-audio",
- "objc2-foundation",
  "ort",
  "serde_json",
  "thiserror 2.0.21",
@@ -3241,6 +3251,9 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "glance-macos",
+]
 
 [[package]]
 name = "yoke"

@@ -5,7 +5,8 @@ use std::time::Instant;
 
 use anyhow::{Result, bail};
 use glance_capture::ScreenCapture;
-use glance_capture::live::{LiveScreen, request_screen_recording, screen_recording_granted};
+use glance_macos::capture::LiveScreen;
+use glance_macos::permission::{request_screen_recording, screen_recording_granted};
 
 use super::ms;
 

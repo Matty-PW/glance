@@ -17,7 +17,3 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2.workspace = true
-objc2-avf-audio.workspace = true
-objc2-foundation.workspace = true

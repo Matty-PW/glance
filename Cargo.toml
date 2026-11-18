@@ -23,6 +23,9 @@ todo = "warn"
 glance-audio = { path = "crates/audio" }
 glance-capture = { path = "crates/capture" }
 glance-llm-client = { path = "crates/llm-client" }
+# Everything macOS-specific (AppKit, ScreenCaptureKit, AVFoundation, Carbon
+# hotkeys, the bundle); the other crates hold traits and portable code only.
+glance-macos = { path = "crates/macos" }
 glance-models = { path = "crates/models" }
 glance-orchestrator = { path = "crates/orchestrator" }
 glance-stt = { path = "crates/stt" }

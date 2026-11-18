@@ -60,17 +60,23 @@ rust-toolchain.toml   pinned stable toolchain, edition 2024
 models.toml           pinned model manifest (compiled into the binary)
 deny.toml  .gitleaks.toml  .githooks/pre-commit  .github/workflows/ci.yml
 crates/
-  capture/       trait ScreenCapture      + ScreenCaptureKit impl
-  audio/         traits AudioInput/Output + cpal impl, resampling, ring buffers
+  capture/       trait ScreenCapture      + PNG file source
+  audio/         traits AudioInput/Output + cpal impl, resampling
   stt/           trait SpeechToText       + Parakeet impl
   tts/           trait TextToSpeech, SentenceChunker
-                 + system-voice impl, + Kokoro impl (trait Phonemizer)
+                 + Kokoro impl (trait Phonemizer)
+  macos/         everything macOS-specific, behind the traits above and the
+                 orchestrator's Shell/HotkeySource: ScreenCaptureKit capture,
+                 system voice (AVSpeech), permissions, Carbon hotkeys, the app
+                 shell (NSApplication loop, menu bar, overlay, settings), and
+                 Glance.app bundling/signing (used by xtask). No AppKit type
+                 reaches the core crates (decided 2026-11-18).
   llm-client/    trait ChatModel          + OpenAI-compatible SSE client,
                  escalation parser, managed llama-server supervisor
   models/        manifest parser, downloader, verifier   (extra crate)
   orchestrator/  turn state machine, session, config types, trait HotkeySource
-  app/           binary: main-thread event loop, hotkey/tray impls, CLI, later UI
-  xtask/         `cargo xtask bundle`: .app assembly + codesign   (extra crate)
+  app/           binary: composition root and CLI; portable (talks to Shell)
+  xtask/         `cargo xtask bundle`: calls glance-macos's bundler
 ```
 
 Why `models` is separate: it is the only code that downloads anything, so it gets

@@ -1,14 +1,12 @@
 //! Text-to-speech behind the [`TextToSpeech`] trait, plus [`SentenceChunker`],
 //! which turns streamed model output into speakable sentences.
 //!
-//! Two engines: the macOS system voice (M1) and Kokoro-82M on ONNX Runtime.
-//! See `docs/DESIGN.md` §6.
+//! Engines: Kokoro-82M on ONNX Runtime (here), and the macOS system voice
+//! (in the platform crate, `glance-macos`). See `docs/DESIGN.md` §6.
 
 mod chunker;
 pub mod kokoro;
 mod speakable;
-#[cfg(target_os = "macos")]
-pub mod system_voice;
 
 pub use chunker::{ChunkerConfig, SentenceChunker};
 pub use speakable::speakable;

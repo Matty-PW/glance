@@ -4,7 +4,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
-use glance_tts::system_voice::{installed_voices, run_main_loop_until};
+use glance_macos::system_voice::{installed_voices, run_main_loop_until};
 use glance_tts::{ChunkerConfig, SentenceChunker};
 
 use super::speech::{self, SpeechArgs};

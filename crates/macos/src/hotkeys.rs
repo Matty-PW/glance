@@ -3,7 +3,7 @@
 //! (`docs/DESIGN.md` §10). The manager must be created on the main thread,
 //! and events arrive there through the app's run loop.
 //!
-//! Chords come from `[hotkeys]` in the config file, written like
+//! Chords come from `[hotkeys]` in the app's config file, written like
 //! "Ctrl+Opt+T" (modifiers Ctrl, Opt/Option/Alt, Shift, Cmd; then one key).
 //! At least one modifier is required, so a chord can never swallow typing.
 
@@ -14,7 +14,23 @@ use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::config::HotkeysConfig;
+/// The three chords as written, e.g. "Ctrl+Opt+T".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chords {
+    pub talk: String,
+    pub look: String,
+    pub think: String,
+}
+
+impl Default for Chords {
+    fn default() -> Self {
+        Self {
+            talk: "Ctrl+Opt+G".into(),
+            look: "Ctrl+Opt+Shift+G".into(),
+            think: "Ctrl+Opt+T".into(),
+        }
+    }
+}
 
 /// The chords as the user wrote them, for the tray and log lines.
 #[derive(Debug, Clone)]
@@ -29,7 +45,7 @@ static LABELS: OnceLock<Labels> = OnceLock::new();
 /// The registered chords' labels (the defaults until registration).
 pub fn labels() -> Labels {
     LABELS.get().cloned().unwrap_or_else(|| {
-        let d = HotkeysConfig::default();
+        let d = Chords::default();
         Labels {
             talk: d.talk,
             look: d.look,
@@ -66,10 +82,7 @@ pub struct Hotkeys {
 
 /// Register the chords and forward their presses and releases to `events`.
 /// On failure the message names every chord that could not be registered.
-pub fn register(
-    events: UnboundedSender<HotkeyEvent>,
-    config: &HotkeysConfig,
-) -> Result<Hotkeys, String> {
+pub fn register(events: UnboundedSender<HotkeyEvent>, config: &Chords) -> Result<Hotkeys, String> {
     let chords = [
         (Chord::Talk, config.talk.as_str()),
         (Chord::Look, config.look.as_str()),
