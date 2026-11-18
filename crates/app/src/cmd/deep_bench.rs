@@ -66,6 +66,10 @@ pub struct Args {
     /// --deep-arg=--checkpoint-min-step --deep-arg=64.
     #[arg(long = "deep-arg", allow_hyphen_values = true)]
     deep_args: Vec<String>,
+    /// Start DEEP fresh before each question, as "think harder" does when
+    /// DEEP is not loaded: measures load + image prefill + thinking.
+    #[arg(long)]
+    cold: bool,
     /// Prewarm as [system, user:image] without the assistant turn opened,
     /// and ask as [system, user:image, user:question], so the prewarm prompt
     /// is an exact prefix of the question's (hybrid models only restore
@@ -103,6 +107,12 @@ struct DeepRun {
     scene: String,
     question: String,
     effort: String,
+    /// `--cold`: starting DEEP's server until it is ready.
+    load_ms: Option<f64>,
+    /// `--cold`: a think-harder tap to DEEP's first sound (load, prefill,
+    /// then the question to its first sentence sounding).
+    cold_first_word_ms: Option<f64>,
+    answer_words: usize,
     prewarm_ms: f64,
     prewarm_prompt_n: Option<u64>,
     /// Request to first thinking token (prompt evaluation of the question).
@@ -168,19 +178,24 @@ pub async fn run(args: Args) -> Result<()> {
         println!("DEEP extra flags: {}", args.deep_args.join(" "));
     }
     let started = Instant::now();
-    let (fast, deep) = tokio::try_join!(
-        start_server(&args.fast, 8192, Vec::new()),
-        start_server(&args.deep, args.deep_ctx, mtp),
-    )?;
+    let fast = start_server(&args.fast, 8192, Vec::new()).await?;
+    let mut deep = if args.cold {
+        None
+    } else {
+        Some(start_server(&args.deep, args.deep_ctx, mtp.clone()).await?)
+    };
     println!(
-        "servers up in {:.1} s (FAST {} MB, DEEP {} MB resident); MTP {}",
+        "servers up in {:.1} s (FAST {} MB, DEEP {}); MTP {}",
         started.elapsed().as_secs_f64(),
         rss_mb(fast.pid()),
-        rss_mb(deep.pid()),
+        deep.as_ref()
+            .map_or("started per question (--cold)".to_owned(), |d| format!(
+                "{} MB resident",
+                rss_mb(d.pid())
+            )),
         if args.no_mtp { "off" } else { "on" }
     );
     let fast_client = OpenAiClient::new(fast.endpoint().clone())?;
-    let deep_client = OpenAiClient::new(deep.endpoint().clone())?;
 
     let speech_settings = SpeechArgs {
         volume: Some(0.0),
@@ -193,6 +208,21 @@ pub async fn run(args: Args) -> Result<()> {
     let mut fast_runs = Vec::new();
     let mut deep_runs: Vec<DeepRun> = Vec::new();
     for (scene, ask) in &questions {
+        let mut load_ms = None;
+        if args.cold {
+            drop(deep.take()); // stops the previous server
+            let t = Instant::now();
+            let server = start_server(&args.deep, args.deep_ctx, mtp.clone()).await?;
+            load_ms = Some(ms(t.elapsed()));
+            println!(
+                "\n[{scene}] DEEP loaded in {:.1} s ({} MB resident)",
+                t.elapsed().as_secs_f64(),
+                rss_mb(server.pid())
+            );
+            deep = Some(server);
+        }
+        let deep_client =
+            OpenAiClient::new(deep.as_ref().expect("DEEP is running").endpoint().clone())?;
         let shot = PngFile::new(args.shots.join(format!("{scene}.png"))).capture()?;
         let fast_image = Part::Png(shot.encode(args.fast_edge)?.png());
         let deep_image = Part::Png(shot.encode(args.deep_edge)?.png());
@@ -295,6 +325,8 @@ pub async fn run(args: Args) -> Result<()> {
             run.question = ask.clone();
             run.effort = effort.clone();
             run.prewarm_ms = ms(prewarm);
+            run.load_ms = load_ms.take();
+            run.answer_words = run.answer.split_whitespace().count();
             run.prewarm_prompt_n = warm.timings.and_then(|t| t.prompt_n);
             // Speak DEEP's first sentence to time the voice for real.
             if let Some(sentence) = first_sentence(&run.answer) {
@@ -304,6 +336,9 @@ pub async fn run(args: Args) -> Result<()> {
                 run.keyup_first_word_ms = run
                     .first_word_ms
                     .map(|t| t + ms(STT_ESTIMATE) + ms(decision_time));
+                if let Some(load) = run.load_ms {
+                    run.cold_first_word_ms = run.first_word_ms.map(|t| load + run.prewarm_ms + t);
+                }
             }
             println!(
                 "  {effort:<6} prewarm {:>6.0} ms | thinking {:>7} | answer {:>7} | first word {:>7} (key-up est. {:>7}) | {} tok, {} tok/s, draft {}/{}, cache {}",
@@ -348,6 +383,30 @@ pub async fn run(args: Args) -> Result<()> {
             stat(|r| r.first_word_ms),
             stat(|r| r.keyup_first_word_ms)
         );
+    }
+    if args.cold {
+        println!("\n== cold think harder (DEEP not loaded), median / max");
+        for effort in &args.efforts {
+            let runs: Vec<&DeepRun> = deep_runs.iter().filter(|r| &r.effort == effort).collect();
+            let stat = |f: &dyn Fn(&DeepRun) -> Option<f64>| {
+                let mut v: Vec<f64> = runs.iter().filter_map(|r| f(r)).collect();
+                v.sort_by(f64::total_cmp);
+                match v.len() {
+                    0 => "-".to_owned(),
+                    n => format!("{:.1} / {:.1} s", v[n / 2] / 1000.0, v[n - 1] / 1000.0),
+                }
+            };
+            let mut words: Vec<usize> = runs.iter().map(|r| r.answer_words).collect();
+            words.sort_unstable();
+            println!(
+                "{effort:<7} load {} | image prefill {} | thinking {} | tap -> first word {} | answer words median {}",
+                stat(&|r| r.load_ms),
+                stat(&|r| Some(r.prewarm_ms)),
+                stat(&|r| r.thinking_ms),
+                stat(&|r| r.cold_first_word_ms),
+                words.get(words.len() / 2).copied().unwrap_or(0)
+            );
+        }
     }
     println!(
         "Budget (DESIGN §12): filler within 1.1 s of key-up, DEEP's first audio within 4 s of the \
