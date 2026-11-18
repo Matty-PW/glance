@@ -1363,3 +1363,18 @@ async fn the_overlay_gets_the_question_then_each_sentence_as_it_is_spoken() {
     // Its Debug never shows the text.
     assert_eq!(format!("{:?}", shown[1]), "Asked(19 chars)");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_answer_length_can_change_while_running() {
+    use crate::ResponseLength::Short;
+    let mut h = Harness::new(with_length(
+        crate::ResponseLength::Long,
+        vec!["what is this"],
+        5,
+    ));
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken().len(), 5);
+    h.controller.set_response_length(Short);
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken().len(), 5 + 2);
+}

@@ -24,6 +24,7 @@
 pub mod length;
 mod report;
 mod session;
+pub mod settings;
 mod turn;
 mod workers;
 
@@ -326,6 +327,9 @@ pub struct Parts {
 
 enum Control {
     NewSession,
+    SetLength(ResponseLength),
+    SetDeepEffort(Value),
+    SetDeepIdle(Duration),
 }
 
 /// Commands to a running [`Orchestrator`] from outside the hotkeys (the
@@ -340,6 +344,22 @@ impl Controller {
     /// screenshot and history.
     pub fn new_session(&self) {
         let _ = self.tx.send(Control::NewSession);
+    }
+
+    /// Change `response_length` from the next answer on.
+    pub fn set_response_length(&self, length: ResponseLength) {
+        let _ = self.tx.send(Control::SetLength(length));
+    }
+
+    /// Change DEEP's chat-template variables (reasoning effort) from the
+    /// next DEEP request on.
+    pub fn set_deep_template_kwargs(&self, kwargs: Value) {
+        let _ = self.tx.send(Control::SetDeepEffort(kwargs));
+    }
+
+    /// Change how long an on-demand DEEP may sit unused.
+    pub fn set_deep_idle(&self, idle: Duration) {
+        let _ = self.tx.send(Control::SetDeepIdle(idle));
     }
 }
 
@@ -426,7 +446,7 @@ impl Orchestrator {
                 .then(|| idle_since + self.shared.config.session_idle);
             let deep_unload = match (&phase, self.deep_last_used) {
                 (Phase::Idle, Some(used)) if !self.shared.config.auto_escalate => {
-                    Some(used + self.shared.config.deep_idle)
+                    Some(used + self.shared.live().deep_idle)
                 }
                 _ => None,
             };
@@ -451,6 +471,9 @@ impl Orchestrator {
                         phase = Phase::Idle;
                         self.end_session();
                     }
+                    Control::SetLength(length) => self.shared.live_mut().response_length = length,
+                    Control::SetDeepEffort(kwargs) => self.shared.live_mut().deep_kwargs = Some(kwargs),
+                    Control::SetDeepIdle(idle) => self.shared.live_mut().deep_idle = idle,
                 },
                 () = sleep_until(recording_cap) => {
                     // The recording cap: behave as if the chord was released.

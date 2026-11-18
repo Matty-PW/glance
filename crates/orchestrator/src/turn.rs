@@ -61,6 +61,16 @@ pub(crate) struct Shared {
     /// turn ignores anything left over from a cancelled one.
     pub(crate) speech: Mutex<UnboundedReceiver<SpeechEvent>>,
     pub(crate) config: TurnConfig,
+    /// The settings that may change while glance runs.
+    live: std::sync::RwLock<Live>,
+}
+
+/// Settings the settings window changes live; they start from TurnConfig.
+pub(crate) struct Live {
+    pub(crate) response_length: crate::ResponseLength,
+    /// Replaces DEEP's `chat_template_kwargs` when set.
+    pub(crate) deep_kwargs: Option<Value>,
+    pub(crate) deep_idle: Duration,
 }
 
 impl Shared {
@@ -75,14 +85,33 @@ impl Shared {
             display: parts.display,
             tts: parts.tts,
             speech: Mutex::new(parts.speech_events),
+            live: std::sync::RwLock::new(Live {
+                response_length: config.response_length,
+                deep_kwargs: None,
+                deep_idle: config.deep_idle,
+            }),
             config,
         }
+    }
+
+    pub(crate) fn live(&self) -> std::sync::RwLockReadGuard<'_, Live> {
+        self.live.read().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub(crate) fn live_mut(&self) -> std::sync::RwLockWriteGuard<'_, Live> {
+        self.live.write().unwrap_or_else(|p| p.into_inner())
     }
 
     fn request(&self, tier: Tier, messages: Vec<Message>, max_tokens: u32) -> ChatRequest {
         let extra_body: Map<String, Value> = match tier {
             Tier::Fast => self.config.extra_body.clone(),
-            Tier::Deep => self.config.deep_extra_body.clone(),
+            Tier::Deep => {
+                let mut body = self.config.deep_extra_body.clone();
+                if let Some(kwargs) = &self.live().deep_kwargs {
+                    body.insert("chat_template_kwargs".into(), kwargs.clone());
+                }
+                body
+            }
         };
         ChatRequest {
             messages,
@@ -102,7 +131,7 @@ impl Shared {
             (Tier::Fast, false) => &self.config.system_prompt,
         };
         let mut prompt = prompt.clone();
-        if let Some(hint) = self.config.response_length.hint(tier == Tier::Deep) {
+        if let Some(hint) = self.live().response_length.hint(tier == Tier::Deep) {
             prompt.push_str(hint);
         }
         Message::system(prompt)
@@ -514,7 +543,7 @@ async fn run(
             .map_or_else(String::new, |r| r.question.clone()),
     }));
 
-    let length = shared.config.response_length;
+    let length = shared.live().response_length;
     let mut speech = shared.speech.lock().await;
     drain(&mut speech);
     let mut voice = Voice::new(shared, key_up, notify);
@@ -760,7 +789,7 @@ async fn deep_answer(
     report.deep_prefill = Some(started.elapsed());
 
     notify.progress(Progress::ThinkingHarder);
-    let length = shared.config.response_length;
+    let length = shared.live().response_length;
     let cap = length.sentence_cap(&question);
     let request = shared.request(
         Tier::Deep,
