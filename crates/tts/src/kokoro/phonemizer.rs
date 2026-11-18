@@ -425,7 +425,12 @@ mod tests {
             .phonemize("An assertion left == right failed with left: 3 and right: 4.")
             .unwrap();
         assert!(p.contains("ˈikw"), "{p}"); // "equals"
-        for text in ["It returns -> Result.", "Use && here.", "See ~~~ below.", "x |> y"] {
+        for text in [
+            "It returns -> Result.",
+            "Use && here.",
+            "See ~~~ below.",
+            "x |> y",
+        ] {
             assert!(!ph.phonemize(text).unwrap().is_empty(), "{text}");
         }
     }

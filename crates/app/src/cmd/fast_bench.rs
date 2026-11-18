@@ -363,7 +363,14 @@ async fn ask(
         }
     }
     let tts = match first_sentence(&answer) {
-        Some(sentence) => Some(first_audio(&*voice.tts, &mut voice.events, &sentence).await?),
+        // A speech failure is recorded (no first word), not fatal.
+        Some(sentence) => match first_audio(&*voice.tts, &mut voice.events, &sentence).await {
+            Ok(t) => Some(t),
+            Err(e) => {
+                eprintln!("  speech failed: {e:#}");
+                None
+            }
+        },
         None => None,
     };
     let first_word = first_chunk.zip(tts).map(|(c, t)| send + c + t);
