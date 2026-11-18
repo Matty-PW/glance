@@ -159,6 +159,23 @@ claim ("Engineering grew fastest") before correcting itself, likely from
 "the conclusion first" under the 128-token thinking cap. Answers:
 `eval-local/results/fast-brief.md`, `eval-local/results/deep-cold.json`.
 
+**response_length (2026-11-18).** Original prompts restored; cap in code.
+FAST 4B, the 12 eval questions asked fresh and warm (24 answers per mode);
+DEEP (Qwen3.8-27B, medium effort, 128-token thinking cap) on sheet and chart:
+
+| Mode | FAST hard words (median / max) | FAST ordinary words | Ordinary correct | FAST first word | DEEP words (sheet, chart) | DEEP sheet answer |
+|---|---|---|---|---|---|---|
+| short | 52 / 92 | 12 | 12/12 | 1.05 s | 32, 41 | **wrong** ("Engineering grew fastest") |
+| medium | 63 / 89 | 10 | 12/12 | 1.09 s | 42, 46 | correct |
+| long | 72 / 121 | 14 | 10/12 | 1.17 s | 65, 85 | correct |
+
+Three of the six hard questions ask for a walkthrough or detail, so they are
+never capped. The two long-mode misses are the editor question answered with
+a different detail than the expected `u64` (fresh and warm). DEEP's chart
+answer was right in all modes; its first word came 7.9–9.4 s after the
+question with the screenshot prefilled. The earlier regressions (FAST's
+editor answer, DEEP's wrong opening) are gone in medium.
+
 ## What is measured
 
 **Image-prefix cache (M0).** On a real screenshot with Qwen3-VL-4B, the
