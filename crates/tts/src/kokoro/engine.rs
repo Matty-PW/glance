@@ -12,7 +12,7 @@
 //! glance does not keep the audio hardware running.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
@@ -66,6 +66,9 @@ enum Command {
         generation: u64,
     },
     WarmUp,
+    /// A new voice (or blend) from the next sentence; the phonemizer follows
+    /// its accent.
+    SetVoice(Box<VoiceStyle>, Accent),
 }
 
 struct Shared {
@@ -112,6 +115,9 @@ pub struct KokoroVoice {
     commands: mpsc::Sender<Command>,
     shared: Arc<Shared>,
     next_id: AtomicU64,
+    voices_dir: std::path::PathBuf,
+    /// The pace as f32 bits, read by the engine for each sentence.
+    speed: Arc<AtomicU32>,
 }
 
 impl KokoroVoice {
@@ -127,6 +133,9 @@ impl KokoroVoice {
         let (commands, inbox) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let engine_shared = Arc::clone(&shared);
+        let speed = Arc::new(AtomicU32::new(config.speed.to_bits()));
+        let engine_speed = Arc::clone(&speed);
+        let voices_dir = config.voices_dir.clone();
         std::thread::Builder::new()
             .name("glance-kokoro".into())
             .spawn(move || {
@@ -139,7 +148,15 @@ impl KokoroVoice {
                 match loaded {
                     Ok((model, phonemizer, style)) => {
                         let _ = ready_tx.send(Ok(()));
-                        engine(model, phonemizer, style, &config, &engine_shared, &inbox);
+                        engine(
+                            model,
+                            phonemizer,
+                            style,
+                            &config,
+                            &engine_speed,
+                            &engine_shared,
+                            &inbox,
+                        );
                     }
                     Err(e) => {
                         let _ = ready_tx.send(Err(e));
@@ -153,9 +170,31 @@ impl KokoroVoice {
                 commands,
                 shared,
                 next_id: AtomicU64::new(1),
+                voices_dir,
+                speed,
             },
             receiver,
         ))
+    }
+}
+
+impl KokoroVoice {
+    /// Use another voice or blend from the next sentence (settings window).
+    /// The voice file is read and checked here; an error leaves the old one.
+    pub fn set_voice(&self, choice: &VoiceChoice) -> Result<(), TtsError> {
+        let style = load_voice(&self.voices_dir, choice)?;
+        self.commands
+            .send(Command::SetVoice(
+                Box::new(style),
+                Accent::of_voice(choice.lead()),
+            ))
+            .map_err(|_| TtsError::EngineGone)
+    }
+
+    /// Kokoro pace (0.5 to 2.0) from the next sentence.
+    pub fn set_speed(&self, speed: f32) {
+        self.speed
+            .store(speed.clamp(0.5, 2.0).to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -187,11 +226,13 @@ impl TextToSpeech for KokoroVoice {
 }
 
 /// Body of the engine thread. Ends when the [`KokoroVoice`] is dropped.
+#[allow(clippy::too_many_arguments)]
 fn engine(
     mut model: KokoroModel,
-    phonemizer: Misaki,
-    style: VoiceStyle,
+    mut phonemizer: Misaki,
+    mut style: VoiceStyle,
     config: &KokoroConfig,
+    speed: &AtomicU32,
     shared: &Arc<Shared>,
     inbox: &mpsc::Receiver<Command>,
 ) {
@@ -214,6 +255,12 @@ fn engine(
         };
         last_active = Instant::now();
         match command {
+            Command::SetVoice(new_style, accent) => {
+                style = *new_style;
+                if accent != phonemizer.accent() {
+                    phonemizer = Misaki::new(accent);
+                }
+            }
             Command::WarmUp => {
                 if let Err(e) = shared.open_speaker() {
                     eprintln!("kokoro: {e}");
@@ -229,9 +276,10 @@ fn engine(
                     shared.cancelled(id);
                     continue;
                 }
-                let samples = phonemizer
-                    .phonemize(&text)
-                    .and_then(|phonemes| model.synthesize(&phonemes, &style, config.speed));
+                let samples = phonemizer.phonemize(&text).and_then(|phonemes| {
+                    let speed = f32::from_bits(speed.load(Ordering::Relaxed));
+                    model.synthesize(&phonemes, &style, speed)
+                });
                 let volume = config.volume.clamp(0.0, 1.0);
                 let played = samples.and_then(|mut samples| {
                     samples.iter_mut().for_each(|s| *s *= volume);

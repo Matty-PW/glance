@@ -143,8 +143,14 @@ impl SpeechDelegate {
 }
 
 enum Command {
-    Speak { id: UtteranceId, text: String },
+    Speak {
+        id: UtteranceId,
+        text: String,
+    },
     Stop,
+    /// From the next sentence on (settings window).
+    SetVoice(Option<String>),
+    SetRate(Option<f32>),
 }
 
 /// The macOS system voice.
@@ -194,6 +200,18 @@ impl TextToSpeech for SystemVoice {
     }
 }
 
+impl SystemVoice {
+    /// Use another voice (identifier or language) from the next sentence.
+    pub fn set_voice(&self, voice: Option<String>) {
+        let _ = self.commands.send(Command::SetVoice(voice));
+    }
+
+    /// Speaking rate, 0.0 to 1.0, from the next sentence.
+    pub fn set_rate(&self, rate: Option<f32>) {
+        let _ = self.commands.send(Command::SetRate(rate));
+    }
+}
+
 /// Body of the speech thread. Ends, silencing any speech, when the owning
 /// [`SystemVoice`] is dropped.
 fn speech_thread(
@@ -209,7 +227,8 @@ fn speech_thread(
     // The synthesizer holds its delegate weakly; `delegate` lives until the
     // end of this function, after the final `stop` below.
     unsafe { synthesizer.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
-    let voice = config.voice.as_deref().and_then(find_voice);
+    let mut voice = config.voice.as_deref().and_then(find_voice);
+    let mut rate = config.rate;
 
     let silence = |synthesizer: &AVSpeechSynthesizer| {
         unsafe { synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary::Immediate) };
@@ -232,7 +251,7 @@ fn speech_thread(
                     if let Some(voice) = &voice {
                         utterance.setVoice(Some(voice));
                     }
-                    if let Some(rate) = config.rate {
+                    if let Some(rate) = rate {
                         utterance.setRate(rate.clamp(0.0, 1.0));
                     }
                     utterance.setVolume(config.volume.clamp(0.0, 1.0));
@@ -241,6 +260,8 @@ fn speech_thread(
                 unsafe { synthesizer.speakUtterance(&utterance) };
             }
             Command::Stop => silence(&synthesizer),
+            Command::SetVoice(wanted) => voice = wanted.as_deref().and_then(find_voice),
+            Command::SetRate(new_rate) => rate = new_rate,
         }
     }
     silence(&synthesizer);

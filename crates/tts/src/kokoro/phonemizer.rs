@@ -44,6 +44,7 @@ impl Accent {
 
 pub struct Misaki {
     g2p: G2P,
+    accent: Accent,
 }
 
 impl Misaki {
@@ -52,7 +53,12 @@ impl Misaki {
         let language = accent.language();
         Self {
             g2p: G2P::with_fallback(language, Some(Box::new(OovFallback::new(language)))),
+            accent,
         }
+    }
+
+    pub fn accent(&self) -> Accent {
+        self.accent
     }
 }
 
