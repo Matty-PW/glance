@@ -142,6 +142,23 @@ Both prewarms finish inside the 3 s hold, so "fresh" costs no more than
 (0.47–0.60 s) and the first sentence's length dominate. No answer hit the
 200-token cap. Answers side by side: `eval-local/results/fast-compare.md`.
 
+**Think harder, cold (`deep-bench --cold`, 2026-11-18).** DEEP not loaded:
+each of the 6 hard questions starts DEEP afresh (Qwen3.8-27B, medium effort,
+128-token thinking cap, MTP, 2048 px), FAST running alongside. Median / max:
+load 9.7 / 9.7 s (model file in the OS cache; reading 17.4 GB from the SSD
+would add a few seconds), image prefill 28.8 / 29.4 s, thinking 7.2 / 7.5 s,
+**tap to DEEP's first word 48.6 / 49.0 s**. Once loaded and prefilled, the
+same question takes ~10 s; loaded but on a new screenshot ~39 s.
+
+**Brevity prompt ("two or three short sentences", 2026-11-18): did not
+shorten answers.** FAST 4B hard answers 63 → 70 words median (max 87 → 133,
+one now cut off at the 200-token cap); ordinary 10 → 11. DEEP 155 → 128 words.
+Two regressions: FAST's editor answer lost the expected detail (11/12
+ordinary correct, was 12/12), and DEEP's sheet answer opened with a wrong
+claim ("Engineering grew fastest") before correcting itself, likely from
+"the conclusion first" under the 128-token thinking cap. Answers:
+`eval-local/results/fast-brief.md`, `eval-local/results/deep-cold.json`.
+
 ## What is measured
 
 **Image-prefix cache (M0).** On a real screenshot with Qwen3-VL-4B, the
