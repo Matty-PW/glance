@@ -35,7 +35,7 @@ use super::tts_bench::first_audio;
 use super::{find_model, manifest, ms, store};
 
 /// Speech recognition of a typical question (M0: 116 ms for 2.7 s).
-const STT_ESTIMATE: Duration = Duration::from_millis(120);
+pub(super) const STT_ESTIMATE: Duration = Duration::from_millis(120);
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -366,7 +366,12 @@ pub async fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn req(messages: Vec<Message>, max_tokens: u32, body: &Value, grammar: bool) -> ChatRequest {
+pub(super) fn req(
+    messages: Vec<Message>,
+    max_tokens: u32,
+    body: &Value,
+    grammar: bool,
+) -> ChatRequest {
     let mut request = ChatRequest {
         messages,
         max_tokens: Some(max_tokens),
@@ -382,7 +387,7 @@ fn req(messages: Vec<Message>, max_tokens: u32, body: &Value, grammar: bool) -> 
     request
 }
 
-async fn run_to_end(client: &OpenAiClient, request: ChatRequest) -> Result<ChatSummary> {
+pub(super) async fn run_to_end(client: &OpenAiClient, request: ChatRequest) -> Result<ChatSummary> {
     let mut stream = client.chat(request).await?;
     while let Some(event) = stream.next().await {
         if let ChatEvent::Done(summary) = event? {
@@ -442,14 +447,18 @@ async fn deep_once(client: &OpenAiClient, request: ChatRequest) -> Result<DeepRu
     Ok(run)
 }
 
-fn first_sentence(answer: &str) -> Option<String> {
+pub(super) fn first_sentence(answer: &str) -> Option<String> {
     let mut chunker = SentenceChunker::new(ChunkerConfig::default());
     let mut chunks = chunker.push(answer);
     chunks.extend(chunker.finish());
     chunks.into_iter().next()
 }
 
-async fn start_server(id: &str, ctx: u32, extra_args: Vec<String>) -> Result<ManagedServer> {
+pub(super) async fn start_server(
+    id: &str,
+    ctx: u32,
+    extra_args: Vec<String>,
+) -> Result<ManagedServer> {
     let id = id.to_owned();
     let spec = tokio::task::spawn_blocking(move || -> Result<ServerSpec> {
         let manifest = manifest()?;
@@ -480,7 +489,7 @@ async fn start_server(id: &str, ctx: u32, extra_args: Vec<String>) -> Result<Man
 }
 
 /// Resident memory of a process in MB (`ps`).
-fn rss_mb(pid: u32) -> u64 {
+pub(super) fn rss_mb(pid: u32) -> u64 {
     std::process::Command::new("ps")
         .args(["-o", "rss=", "-p", &pid.to_string()])
         .output()

@@ -3,6 +3,7 @@ pub mod bench;
 pub mod cache_check;
 pub mod capture_check;
 pub mod deep_bench;
+pub mod fast_bench;
 pub mod mic_check;
 pub mod models;
 pub mod say;

@@ -36,6 +36,9 @@ enum Command {
     Spike(cmd::spike::Args),
     /// Time a speech model on WAV clips and score word errors.
     SttBench(cmd::stt_bench::Args),
+    /// FAST-only comparison: memory, first word on a fresh capture and warm,
+    /// answers side by side.
+    FastBench(cmd::fast_bench::Args),
     /// DEEP bake-off: FAST's escalation decision, then DEEP's thinking, answer
     /// and first-word times per reasoning effort.
     DeepBench(cmd::deep_bench::Args),
@@ -92,6 +95,13 @@ fn main() -> anyhow::Result<()> {
         Command::Models { action } => runtime()?.block_on(cmd::models::run(action)),
         Command::ServerCheck(args) => runtime()?.block_on(cmd::server_check::run(args)),
         Command::CacheCheck(args) => runtime()?.block_on(cmd::cache_check::run(args)),
+        Command::FastBench(args) => {
+            // Speaks (at volume 0) to time the voice; see Spike.
+            let runtime = runtime()?;
+            let task = runtime.spawn(cmd::fast_bench::run(args));
+            glance_tts::system_voice::run_main_loop_until(|| task.is_finished());
+            runtime.block_on(task)?
+        }
         Command::DeepBench(args) => {
             // Speaks (at volume 0) to time the voice; see Spike.
             let runtime = runtime()?;

@@ -58,10 +58,27 @@ impl Misaki {
 
 impl Phonemizer for Misaki {
     fn phonemize(&self, text: &str) -> Result<String, TtsError> {
-        let (phonemes, _) = self
-            .g2p
-            .g2p(text)
-            .map_err(|e| TtsError::Engine(format!("phonemizer: {e}")))?;
+        let phonemes = match self.g2p.g2p(text) {
+            Ok((phonemes, _)) => phonemes,
+            // A sentence is never dropped for its punctuation: retry with
+            // everything but letters, digits and sentence marks blanked.
+            Err(_) => {
+                let plain: String = text
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || " .,!?;:'-".contains(c) {
+                            c
+                        } else {
+                            ' '
+                        }
+                    })
+                    .collect();
+                self.g2p
+                    .g2p(&plain)
+                    .map_err(|e| TtsError::Engine(format!("phonemizer: {e}")))?
+                    .0
+            }
+        };
         // Anything still unknown is dropped rather than spoken as a marker.
         Ok(phonemes.replace(&self.g2p.unk, "").trim().to_owned())
     }
@@ -140,6 +157,29 @@ impl Fallback for OovFallback {
         }
         if let Some(p) = self.clock_time(word) {
             return Ok(p);
+        }
+        // Symbols on their own ("==", "->", "&&"): name the common ones,
+        // skip the rest rather than fail the sentence.
+        if !word.chars().any(char::is_alphanumeric) {
+            let spoken: Vec<String> = word
+                .chars()
+                .filter_map(|c| {
+                    let name = match c {
+                        '=' => "equals",
+                        '+' => "plus",
+                        '<' => "less than",
+                        '>' => "greater than",
+                        '&' => "and",
+                        '%' => "percent",
+                        _ => return None,
+                    };
+                    self.known(name)
+                })
+                .collect();
+            // "==" is said once, not "equals equals".
+            let mut spoken = spoken;
+            spoken.dedup();
+            return Ok(spoken.join(" "));
         }
         // Names with separators: file.rs, a/b/c, snake_case, kebab-case.
         let mut out: Vec<String> = Vec::new();
@@ -376,6 +416,18 @@ mod tests {
         let p = ph.phonemize("Lunch is at 12:15 in manifest.rs.").unwrap();
         assert!(p.contains("twˈɛlv fˌɪftˈin"), "{p}");
         assert!(p.contains("dˈɑt ˈɑɹ ˈɛs"), "{p}");
+    }
+
+    #[test]
+    fn symbols_never_fail_a_sentence() {
+        let ph = us();
+        let p = ph
+            .phonemize("An assertion left == right failed with left: 3 and right: 4.")
+            .unwrap();
+        assert!(p.contains("ˈikw"), "{p}"); // "equals"
+        for text in ["It returns -> Result.", "Use && here.", "See ~~~ below.", "x |> y"] {
+            assert!(!ph.phonemize(text).unwrap().is_empty(), "{text}");
+        }
     }
 
     #[test]
