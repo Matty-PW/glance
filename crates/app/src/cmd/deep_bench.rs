@@ -303,7 +303,7 @@ pub async fn run(args: Args) -> Result<()> {
             };
             let body = json!({"cache_prompt": true, "chat_template_kwargs": kwargs});
             let mut prompt = DEEP_SYSTEM_PROMPT.to_owned();
-            if let Some(hint) = length.hint() {
+            if let Some(hint) = length.hint(true) {
                 prompt.push_str(hint);
             }
             let system = Message::system(prompt);

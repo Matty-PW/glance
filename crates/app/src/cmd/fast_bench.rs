@@ -307,7 +307,7 @@ async fn ask(
         json!({"cache_prompt": true, "chat_template_kwargs": {"enable_thinking": false}});
     let length = ResponseLength::parse(&args.length).context("--length: short, medium or long")?;
     let mut prompt = SPOKEN_SYSTEM_PROMPT.to_owned();
-    if let Some(hint) = length.hint() {
+    if let Some(hint) = length.hint(false) {
         prompt.push_str(hint);
     }
     let system = Message::system(prompt);

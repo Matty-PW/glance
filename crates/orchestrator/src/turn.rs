@@ -99,7 +99,7 @@ impl Shared {
             (Tier::Fast, false) => &self.config.system_prompt,
         };
         let mut prompt = prompt.clone();
-        if let Some(hint) = self.config.response_length.hint() {
+        if let Some(hint) = self.config.response_length.hint(tier == Tier::Deep) {
             prompt.push_str(hint);
         }
         Message::system(prompt)

@@ -5,7 +5,9 @@
 //! the cap is reached, generation is cancelled, and only the spoken part is
 //! kept in the session, so "tell me more" continues from what was heard.
 //!
-//! - `short`: a brief hint in the prompt and a hard cap of 2 sentences.
+//! - `short`: a hard cap of 2 sentences; FAST also gets a brief hint in its
+//!   prompt, DEEP does not (with thinking capped, the hint made it commit to
+//!   a wrong answer on the sheet question, M4).
 //! - `medium` (default): the original prompt, a safety cap of 8 sentences.
 //! - `long`: a detail nudge, no cap, three times the token limit.
 //!
@@ -49,8 +51,10 @@ impl ResponseLength {
     }
 
     /// Appended to the system prompt; `medium` keeps the original wording.
-    pub fn hint(self) -> Option<&'static str> {
+    /// DEEP in `short` mode gets no hint: the cap alone shortens it.
+    pub fn hint(self, deep: bool) -> Option<&'static str> {
         match self {
+            Self::Short if deep => None,
             Self::Short => Some(" Keep it to one or two short sentences."),
             Self::Medium => None,
             Self::Long => Some(
@@ -202,6 +206,14 @@ mod tests {
         assert!(!ends_sentence(
             "The build failed because one test timed out,"
         ));
+    }
+
+    #[test]
+    fn deep_gets_no_brevity_wording_only_the_cap() {
+        assert!(ResponseLength::Short.hint(false).is_some());
+        assert_eq!(ResponseLength::Short.hint(true), None);
+        assert_eq!(ResponseLength::Short.sentence_cap("Why?"), Some(SHORT_CAP));
+        assert!(ResponseLength::Long.hint(true).is_some());
     }
 
     #[test]
