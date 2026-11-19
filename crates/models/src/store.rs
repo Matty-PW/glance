@@ -77,6 +77,64 @@ impl ModelStore {
         Ok(path)
     }
 
+    /// How many of the model's files exist (presence and size only; no
+    /// hashing, so cheap enough for a list).
+    pub fn files_present(&self, model: &Model) -> usize {
+        model
+            .files
+            .iter()
+            .filter(|f| {
+                std::fs::metadata(self.file_path(model, f))
+                    .is_ok_and(|m| m.is_file() && m.len() == f.size)
+            })
+            .count()
+    }
+
+    /// Delete a model's files: only the paths its manifest entry lists (the
+    /// manifest refuses `..` and absolute paths), then any directories left
+    /// empty, then its unfinished downloads. Anything else in the model
+    /// directory stays. Returns the bytes freed.
+    pub fn remove(&self, model: &Model) -> std::io::Result<u64> {
+        let mut freed = 0;
+        let dir = self.model_dir(model);
+        for file in &model.files {
+            let path = self.file_path(model, file);
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_file() => {
+                    std::fs::remove_file(&path)?;
+                    freed += meta.len();
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+            // Empty parents up to and including the model directory.
+            let mut parent = path.parent();
+            while let Some(p) = parent {
+                if !p.starts_with(&dir) || std::fs::remove_dir(p).is_err() {
+                    break;
+                }
+                parent = p.parent();
+            }
+        }
+        freed += self.remove_partials(model);
+        Ok(freed)
+    }
+
+    /// Delete unfinished downloads of this model's files (after a cancel).
+    pub fn remove_partials(&self, model: &Model) -> u64 {
+        let mut freed = 0;
+        for file in &model.files {
+            let partial = self.partial_dir().join(format!("{}.part", file.sha256));
+            if let Ok(meta) = std::fs::metadata(&partial)
+                && std::fs::remove_file(&partial).is_ok()
+            {
+                freed += meta.len();
+            }
+        }
+        freed
+    }
+
     /// Check every file of a model. Returns the model directory, which is the
     /// only way callers obtain a path to load from.
     pub fn verified_dir(&self, model: &Model) -> Result<PathBuf, VerifyError> {
@@ -240,5 +298,40 @@ mod tests {
             Err(VerifyError::Magic { .. })
         ));
         std::fs::remove_dir_all(store.root()).unwrap();
+    }
+
+    #[test]
+    fn remove_deletes_only_the_listed_files() {
+        let store = temp_store("remove");
+        let m = manifest("sub/a.onnx", "onnx", "weights", 3, ABC_SHA);
+        write(&store, &m, b"abc");
+        let model = m.model("m").unwrap();
+        assert_eq!(store.files_present(model), 1);
+        let partial = store.partial_dir().join(format!("{ABC_SHA}.part"));
+        std::fs::create_dir_all(store.partial_dir()).unwrap();
+        std::fs::write(&partial, b"ab").unwrap();
+        let other = store.model_dir(model).join("notes.txt");
+        std::fs::write(&other, b"mine").unwrap();
+
+        assert_eq!(store.remove(model).unwrap(), 3 + 2);
+        assert_eq!(store.files_present(model), 0);
+        assert!(!partial.exists());
+        // The unlisted file and so its directory stay; `sub/` is gone.
+        assert!(other.exists());
+        assert!(!store.model_dir(model).join("sub").exists());
+        std::fs::remove_file(&other).unwrap();
+        // Removing again is fine; an emptied store loses the model dir.
+        write(&store, &m, b"abc");
+        store.remove(model).unwrap();
+        assert!(!store.model_dir(model).exists());
+        assert_eq!(store.remove(model).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_wrong_size_does_not_count_as_present() {
+        let store = temp_store("present");
+        let m = manifest("a.onnx", "onnx", "weights", 3, ABC_SHA);
+        write(&store, &m, b"ab");
+        assert_eq!(store.files_present(m.model("m").unwrap()), 0);
     }
 }
