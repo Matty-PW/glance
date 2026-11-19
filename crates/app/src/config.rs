@@ -408,7 +408,7 @@ mod tests {
             Personality::Custom("Calm, like a pilot.".into())
         );
         assert!(Config::parse("[models]\npersonality = \"custom\"\n").is_err());
-        assert!(Config::parse("[models]\npersonality = \"pirate\"\n").is_err());
+        assert!(Config::parse("[models]\npersonality = \"robot\"\n").is_err());
         let long = format!("[models]\npersonality_custom = \"{}\"\n", "a".repeat(301));
         assert!(Config::parse(&long).is_err());
     }

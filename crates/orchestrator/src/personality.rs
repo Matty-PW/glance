@@ -7,6 +7,14 @@
 //! measured before personalities existed. Every other layer ends with the
 //! same fixed rule (spoken sentences, no emoji, no markdown, no lists), after
 //! any custom text, so a custom style cannot undo it.
+//!
+//! The fun presets (pirate, caveman, Shakespearean) play a character. On
+//! the 4B a mild wording ("Talk like a pirate.") changed almost nothing, so
+//! theirs name the character's words outright; they still say nothing about
+//! length. Words the model can loop on are left out: with "aye" in the
+//! pirate list and "as in: me see big number" in the caveman one, the FAST
+//! eval had one answer each repeating "aye, aye, …" and "Me see …" to the
+//! token limit.
 
 /// Longest custom style, in characters.
 pub const CUSTOM_MAX: usize = 300;
@@ -22,12 +30,27 @@ pub enum Personality {
     Friendly,
     Direct,
     Strict,
+    Pirate,
+    Caveman,
+    Shakespearean,
     /// Already cleaned by [`Personality::parse`].
     Custom(String),
 }
 
 /// The preset names, in the order the settings window lists them.
-pub const PRESETS: [&str; 5] = ["neutral", "friendly", "direct", "strict", "custom"];
+pub const PRESETS: [&str; 8] = [
+    "neutral",
+    "friendly",
+    "direct",
+    "strict",
+    "pirate",
+    "caveman",
+    "shakespearean",
+    "custom",
+];
+
+/// Closes the fun presets' style, before [`SPOKEN_RULE`].
+const KEEP_FACTS: &str = "Keep names, numbers and errors exactly as the screen shows them.";
 
 impl Personality {
     /// From the config's `personality` and `personality_custom`. Custom text
@@ -39,10 +62,14 @@ impl Personality {
             "friendly" => Self::Friendly,
             "direct" => Self::Direct,
             "strict" => Self::Strict,
+            "pirate" => Self::Pirate,
+            "caveman" => Self::Caveman,
+            "shakespearean" => Self::Shakespearean,
             "custom" => Self::Custom(clean_custom(custom)?),
             other => {
                 return Err(format!(
-                    "personality must be neutral, friendly, direct, strict or custom, got \"{other}\""
+                    "personality must be neutral, friendly, direct, strict, pirate, caveman, \
+                     shakespearean or custom, got \"{other}\""
                 ));
             }
         })
@@ -54,12 +81,16 @@ impl Personality {
             Self::Friendly => "friendly",
             Self::Direct => "direct",
             Self::Strict => "strict",
+            Self::Pirate => "pirate",
+            Self::Caveman => "caveman",
+            Self::Shakespearean => "shakespearean",
             Self::Custom(_) => "custom",
         }
     }
 
     /// The style sentence(s) of a preset (custom: the user's text).
-    fn style(&self) -> Option<&str> {
+    fn style(&self) -> Option<String> {
+        let fun = |character: &str| Some(format!("{character} {KEEP_FACTS}"));
         Some(match self {
             Self::Neutral => return None,
             // The first wordings ("Sound warm and friendly, like a helpful
@@ -76,8 +107,27 @@ impl Personality {
                 "Be strict and exact: give names, numbers and errors word for word as the \
                  screen shows them, and say plainly when something is wrong."
             }
+            Self::Pirate => {
+                return fun(
+                    "Speak in character as a salty old pirate, with pirate words such as arr, \
+                     matey, ye and me hearty.",
+                );
+            }
+            Self::Caveman => {
+                return fun(
+                    "Speak in character as a caveman: broken grammar, no little words like \
+                     the or is, and me instead of I.",
+                );
+            }
+            Self::Shakespearean => {
+                return fun(
+                    "Speak in character as a player in a Shakespeare play, with thee, thou, \
+                     thy, doth, hath and prithee.",
+                );
+            }
             Self::Custom(text) => text,
-        })
+        }
+        .to_owned())
     }
 
     /// What is appended to the system prompt; `None` for neutral.
@@ -120,7 +170,7 @@ mod tests {
 
     #[test]
     fn every_other_preset_ends_with_the_spoken_rule() {
-        for name in ["friendly", "direct", "strict"] {
+        for name in ["friendly", "direct", "strict", "pirate", "caveman", "shakespearean"] {
             let p = Personality::parse(name, "").unwrap();
             assert_eq!(p.name(), name);
             let layer = p.layer().unwrap();
@@ -148,6 +198,6 @@ mod tests {
         assert!(Personality::parse("custom", &"é".repeat(301)).is_err());
         assert!(Personality::parse("custom", "   ").is_err());
         assert!(Personality::parse("custom", "a\u{7}b").is_err());
-        assert!(Personality::parse("pirate", "").is_err());
+        assert!(Personality::parse("robot", "").is_err());
     }
 }
