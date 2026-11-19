@@ -90,6 +90,11 @@ pub struct Args {
     /// prewarm token counts show when a switch re-prefills.
     #[arg(long, value_delimiter = ',', default_value = "neutral")]
     personalities: Vec<String>,
+    /// Keep each answer as history for the next run on the same question,
+    /// as follow-ups in a session do (with --split-prewarm): each prewarm
+    /// then extends what DEEP has cached instead of going back to the image.
+    #[arg(long)]
+    session: bool,
     /// Write every answer and timing here as JSON.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -302,6 +307,7 @@ pub async fn run(args: Args) -> Result<()> {
             decision_ms: ms(decision_time),
         });
 
+        let mut session: Vec<Message> = Vec::new();
         let runs: Vec<(String, String)> = args
             .personalities
             .iter()
@@ -334,7 +340,7 @@ pub async fn run(args: Args) -> Result<()> {
             let warm = run_to_end(
                 &deep_client,
                 req(
-                    vec![system.clone(), image_message.clone()],
+                    [vec![system.clone(), image_message.clone()], session.clone()].concat(),
                     1,
                     &warm_body,
                     false,
@@ -343,7 +349,12 @@ pub async fn run(args: Args) -> Result<()> {
             .await?;
             let prewarm = t.elapsed();
             let question = if args.split_prewarm {
-                vec![system, image_message, Message::user_text(ask.clone())]
+                [
+                    vec![system, image_message],
+                    session.clone(),
+                    vec![Message::user_text(ask.clone())],
+                ]
+                .concat()
             } else {
                 vec![
                     system,
@@ -395,6 +406,10 @@ pub async fn run(args: Args) -> Result<()> {
                 run.draft_n.unwrap_or(0),
                 run.cache_n.unwrap_or(0),
             );
+            if args.session {
+                session.push(Message::user_text(ask.clone()));
+                session.push(Message::assistant(run.answer.clone()));
+            }
             deep_runs.push(run);
         }
     }
