@@ -85,6 +85,11 @@ pub struct Args {
     /// response_length: short, medium (the default) or long.
     #[arg(long, default_value = "medium")]
     length: String,
+    /// Personalities to run in this order for each question and effort
+    /// (prewarm, then the question), e.g. neutral,friendly,friendly: the
+    /// prewarm token counts show when a switch re-prefills.
+    #[arg(long, value_delimiter = ',', default_value = "neutral")]
+    personalities: Vec<String>,
     /// Write every answer and timing here as JSON.
     #[arg(long)]
     out: Option<PathBuf>,
@@ -113,6 +118,7 @@ struct DeepRun {
     scene: String,
     question: String,
     effort: String,
+    personality: String,
     /// `--cold`: starting DEEP's server until it is ready.
     load_ms: Option<f64>,
     /// `--cold`: a think-harder tap to DEEP's first sound (load, prefill,
@@ -296,7 +302,15 @@ pub async fn run(args: Args) -> Result<()> {
             decision_ms: ms(decision_time),
         });
 
-        for effort in &args.efforts {
+        let runs: Vec<(String, String)> = args
+            .personalities
+            .iter()
+            .flat_map(|p| args.efforts.iter().map(|e| (p.clone(), e.clone())))
+            .collect();
+        for (personality, effort) in &runs {
+            let layer = glance_orchestrator::Personality::parse(personality, "")
+                .map_err(anyhow::Error::msg)?
+                .layer();
             let kwargs = if effort == "off" {
                 json!({"enable_thinking": false})
             } else {
@@ -306,6 +320,9 @@ pub async fn run(args: Args) -> Result<()> {
             let mut prompt = DEEP_SYSTEM_PROMPT.to_owned();
             if let Some(hint) = length.hint(true) {
                 prompt.push_str(hint);
+            }
+            if let Some(layer) = &layer {
+                prompt.push_str(layer);
             }
             let system = Message::system(prompt);
             let image_message = Message::user(vec![deep_image.clone()]);
@@ -347,6 +364,7 @@ pub async fn run(args: Args) -> Result<()> {
             run.scene = scene.clone();
             run.question = ask.clone();
             run.effort = effort.clone();
+            run.personality = personality.clone();
             run.prewarm_ms = ms(prewarm);
             run.load_ms = load_ms.take();
             run.answer_words = run.answer.split_whitespace().count();
@@ -364,8 +382,9 @@ pub async fn run(args: Args) -> Result<()> {
                 }
             }
             println!(
-                "  {effort:<6} prewarm {:>6.0} ms | thinking {:>7} | answer {:>7} | first word {:>7} (key-up est. {:>7}) | {} tok, {} tok/s, draft {}/{}, cache {}",
+                "  {effort:<6} {personality:<8} prewarm {:>6.0} ms ({} tok processed) | thinking {:>7} | answer {:>7} | first word {:>7} (key-up est. {:>7}) | {} tok, {} tok/s, draft {}/{}, cache {}",
                 run.prewarm_ms,
+                run.prewarm_prompt_n.unwrap_or(0),
                 fmt_s(run.thinking_ms),
                 fmt_s(run.answer_ms),
                 fmt_s(run.first_word_ms),
