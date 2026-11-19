@@ -132,6 +132,21 @@ Done:
   full re-prefill, history included), friendly 159 and 154 (1.7 s). A
   change costs DEEP one re-prefill on the next think-harder in a session,
   the same as a new screenshot; FAST re-reads the image once (~0.1 s).
+  Fun presets (2026-11-19): pirate, caveman, shakespearean. A mild custom
+  wording ("Talk like a pirate.") gave only an occasional "Aye" on the 4B
+  (12/12); naming the character's words works. FAST eval, final wordings:
+  pirate 12/12 (ordinary words median 24, hard 77), caveman 12/12 (9, 58.5),
+  shakespearean 12/12 (hard 80), no cut-offs. First wordings had one
+  answer each looping to the token limit ("aye, aye, …" with "aye" listed;
+  "Me see …" with a "me see big number" example), so those were removed.
+  Longer wording on the pirate and Shakespearean presets is flavour; the
+  sentence cap still applies. DEEP with fun presets not evaluated.
+- Maths as words (2026-11-19, `crates/orchestrator/src/math_words.rs`):
+  `[speech] math_as_words` (default false), a Settings checkbox under Voice,
+  live. Rewrites only the text sent to the voice ("2 x 2 = 4" is spoken
+  "2 times 2 equals 4"); the model's answer, the overlay and so accuracy
+  are unchanged. x, -, / and < > count only between numbers or single
+  letters, so Wi-Fi, 1920x1080, dates and paths stay; tested on both.
   Found on the way, not caused by personality: a prewarm that goes back to
   a shorter prefix than DEEP has cached (e.g. a think-harder tap re-asking
   after a DEEP answer) re-prefills fully even with an unchanged prompt,
