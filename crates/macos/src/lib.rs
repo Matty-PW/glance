@@ -16,6 +16,7 @@
 pub mod bundle;
 pub mod capture;
 pub mod hotkeys;
+mod models_window;
 mod overlay;
 pub mod permission;
 mod settings;

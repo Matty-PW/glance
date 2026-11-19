@@ -15,7 +15,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
-| M5: overlay, settings, model management | **In progress.** Platform split, overlay and settings window done; models panel next |
+| M5: overlay, settings, model management | **In progress.** Platform split, overlay, settings window and models panel done; hands-on checks next |
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -85,11 +85,22 @@ Done:
   other lines and comments kept, the result is validated with the strict
   parser before it replaces the file). Switching voice engine needs a
   restart. `deep_thinking_budget = 0` now means no cap.
-  Not yet checked by hand: layout, live hotkey change, Apply and restart
-  from the bundle.
+  Checked by hand by the maintainer (2026-11-19): layout, live hotkey
+  change, Apply and restart.
+- Models window (`crates/macos/src/models_window.rs`, tray "Models…",
+  "Manage models…" in Settings, or `glance app --open-models`): every
+  model in models.toml with role, size, licence, repo, what uses it, and
+  its state. Download (asks first: size, repo, pinned commit, licence, free
+  space), Cancel, Check (re-hash against the pins), Repair (after a failed
+  check), Delete (asks first; refused for models in use). Backend:
+  `crates/app/src/cmd/app/models.rs`, the same pinned downloader and store
+  as `glance models pull`, one job at a time; downloads need the missing
+  size plus 2 GB free; a cancelled, failed or quit download's partial file
+  is removed. `ModelStore::remove` deletes only the manifest's listed
+  files. Not yet checked by hand.
 
-Left: check the settings window by hand; models panel; rebuild the bundle
-and run the M2/M3 hands-on checks with the maintainer.
+Left: check the models window by hand; rebuild the bundle and run the
+M2/M3 hands-on checks with the maintainer.
 
 ## M4 (in progress)
 

@@ -218,6 +218,10 @@ impl ModelsBackend for Models {
                     };
                 })
                 .await;
+                if result.is_err() {
+                    // Downloads start over, so an unfinished file is no use.
+                    m.store.remove_partials(&model);
+                }
                 m.finish(&model.id, result.map(|_| ()).map_err(|e| e.to_string()));
             })
         })

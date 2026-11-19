@@ -105,7 +105,10 @@ pub struct ModelRow {
 pub enum ModelState {
     NotDownloaded,
     /// Some files are there (an earlier download stopped).
-    Partial { present: usize, total: usize },
+    Partial {
+        present: usize,
+        total: usize,
+    },
     /// All files are there with their pinned sizes; not hashed this session
     /// (every load hashes them anyway).
     Downloaded,
@@ -115,8 +118,14 @@ pub enum ModelState {
     Failed(String),
     /// Checking the files already there before downloading the rest.
     Preparing,
-    Downloading { done: u64, total: u64 },
-    Verifying { file: usize, files: usize },
+    Downloading {
+        done: u64,
+        total: u64,
+    },
+    Verifying {
+        file: usize,
+        files: usize,
+    },
 }
 
 impl ModelState {

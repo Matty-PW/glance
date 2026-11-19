@@ -63,6 +63,9 @@ pub struct Args {
     /// Open the settings window at start-up (also in the menu-bar menu).
     #[arg(long)]
     open_settings: bool,
+    /// Open the models window at start-up (also in the menu-bar menu).
+    #[arg(long)]
+    open_models: bool,
     #[command(flatten)]
     speech: SpeechArgs,
 }
@@ -128,14 +131,20 @@ pub fn run(args: Args) -> Result<()> {
         runtime.handle().clone(),
         models::in_use(args.stt.clone(), config_file.clone()),
     );
+    let models_backend = Arc::new(models::Models(models_panel));
+    let quitting = Arc::clone(&models_backend);
     let options = glance_macos::shell::Options {
         chords,
         model_line,
-        on_quit: Box::new(tiers::shutdown),
+        on_quit: Box::new(move || {
+            // Stop a running download and remove its unfinished file.
+            glance_orchestrator::settings::ModelsBackend::cancel(&*quitting);
+            tiers::shutdown();
+        }),
         on_new_session: Box::new(new_session),
         overlay: config_file.overlay.enabled,
         settings: Some(settings::backend()),
-        models: Some(Arc::new(models::Models(models_panel))),
+        models: Some(models_backend),
     };
     let handle = runtime.handle().clone();
     glance_macos::shell::run(options, move |key_events, shell| {
@@ -143,6 +152,9 @@ pub fn run(args: Args) -> Result<()> {
         if let Some(key_events) = key_events {
             if args.open_settings {
                 glance_macos::shell::open_settings();
+            }
+            if args.open_models {
+                glance_macos::shell::open_models();
             }
             if args.overlay_demo {
                 handle.spawn(overlay_demo(Arc::clone(&shell)));

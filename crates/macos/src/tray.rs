@@ -25,6 +25,7 @@ const ID_SCREEN: &str = "permission-screen";
 const ID_MIC: &str = "permission-mic";
 const ID_NEW_SESSION: &str = "new-session";
 const ID_SETTINGS: &str = "settings";
+const ID_MODELS: &str = "models";
 const ID_QUIT: &str = "quit";
 
 /// A change to show. Built on any thread, applied on the main thread.
@@ -119,6 +120,12 @@ pub fn install(model_line: &str) {
     let screen = MenuItem::with_id(ID_SCREEN, "Screen Recording: …", false, None);
     let mic = MenuItem::with_id(ID_MIC, "Microphone: …", false, None);
     let quit = MenuItem::with_id(ID_QUIT, "Quit glance", true, None);
+    let models = MenuItem::with_id(
+        ID_MODELS,
+        "Models…",
+        crate::shell::models_backend().is_some(),
+        None,
+    );
     let settings = MenuItem::with_id(
         ID_SETTINGS,
         "Settings…",
@@ -157,6 +164,7 @@ pub fn install(model_line: &str) {
         &mic,
         &PredefinedMenuItem::separator(),
         &settings,
+        &models,
         &quit,
     ]);
     if let Err(e) = built {
@@ -307,6 +315,7 @@ fn on_menu(id: &str) {
         ID_MIC => open_settings(MIC_SETTINGS),
         ID_NEW_SESSION => crate::shell::new_session(),
         ID_SETTINGS => DispatchQueue::main().exec_async(crate::settings::open),
+        ID_MODELS => DispatchQueue::main().exec_async(crate::models_window::open),
         ID_QUIT => DispatchQueue::main().exec_async(crate::shell::quit),
         _ => {}
     }

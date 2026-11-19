@@ -47,6 +47,7 @@ const TAG_LENGTH: isize = 4;
 const TAG_THINK: isize = 5;
 const TAG_APPLY_MODELS: isize = 6;
 const TAG_APPLY_HOTKEYS: isize = 7;
+const TAG_MANAGE_MODELS: isize = 8;
 
 const ENGINES: [(&str, &str); 2] = [("kokoro", "Kokoro"), ("system", "macOS system voice")];
 const EFFORTS: [&str; 4] = ["off", "low", "medium", "xhigh"];
@@ -205,6 +206,10 @@ fn on_change(tag: isize) {
                     }
                 }
             }
+            TAG_MANAGE_MODELS => {
+                DispatchQueue::main().exec_async(crate::models_window::open);
+                None
+            }
             _ => None,
         };
         match result {
@@ -328,6 +333,9 @@ impl Window {
         let at = row("", &mut y);
         let apply_models = button(mtm, "Apply and restart", at, &target, TAG_APPLY_MODELS);
         view.addSubview(&apply_models);
+        let manage = button(mtm, "Manage models…", at, &target, TAG_MANAGE_MODELS);
+        manage.setFrame(rect(FIELD_X + 210.0, at, 150.0));
+        view.addSubview(&manage);
 
         header("Hotkeys", &mut y);
         let field = |name: &str, y: &mut f64| {

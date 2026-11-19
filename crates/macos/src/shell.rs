@@ -243,6 +243,11 @@ pub fn open_settings() {
     dispatch2::DispatchQueue::main().exec_async(crate::settings::open);
 }
 
+/// Show the models window (tray menu, or `--open-models`).
+pub fn open_models() {
+    dispatch2::DispatchQueue::main().exec_async(crate::models_window::open);
+}
+
 /// "New session" (tray menu).
 pub(crate) fn new_session() {
     if let Some(actions) = ACTIONS.get() {
