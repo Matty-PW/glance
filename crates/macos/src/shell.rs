@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use dispatch2::DispatchQueue;
-use glance_orchestrator::settings::SettingsBackend;
+use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
 use glance_orchestrator::{HotkeyEvent, Outcome, Shell, Shown, Update};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
@@ -35,6 +35,8 @@ pub struct Options {
     pub overlay: bool,
     /// Reads and saves settings for the settings window.
     pub settings: Option<Arc<dyn SettingsBackend>>,
+    /// Lists, downloads, checks and deletes models for the models window.
+    pub models: Option<Arc<dyn ModelsBackend>>,
 }
 
 struct Actions {
@@ -44,6 +46,12 @@ struct Actions {
 
 static ACTIONS: OnceLock<Actions> = OnceLock::new();
 static SETTINGS: OnceLock<Arc<dyn SettingsBackend>> = OnceLock::new();
+static MODELS: OnceLock<Arc<dyn ModelsBackend>> = OnceLock::new();
+
+/// The app's models backend, if it gave one.
+pub(crate) fn models_backend() -> Option<Arc<dyn ModelsBackend>> {
+    MODELS.get().cloned()
+}
 
 /// The app's settings backend, if it gave one.
 pub(crate) fn settings_backend() -> Option<Arc<dyn SettingsBackend>> {
@@ -115,6 +123,9 @@ pub fn run(
     });
     if let Some(settings) = options.settings {
         let _ = SETTINGS.set(settings);
+    }
+    if let Some(models) = options.models {
+        let _ = MODELS.set(models);
     }
 
     // Hotkeys first: if a chord cannot be registered, say which and do not

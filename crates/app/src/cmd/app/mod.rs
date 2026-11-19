@@ -6,6 +6,7 @@
 //! main-thread run loop, hotkeys, menu-bar icon) is `glance_macos::shell`.
 //! The tokio runtime runs the orchestrator beside the main thread.
 
+mod models;
 mod settings;
 mod tiers;
 
@@ -121,15 +122,20 @@ pub fn run(args: Args) -> Result<()> {
         look: config_file.hotkeys.look.clone(),
         think: config_file.hotkeys.think.clone(),
     };
+    let models_panel = models::ModelsManager::new(
+        manifest()?,
+        store()?,
+        runtime.handle().clone(),
+        models::in_use(args.stt.clone(), config_file.clone()),
+    );
     let options = glance_macos::shell::Options {
         chords,
         model_line,
         on_quit: Box::new(tiers::shutdown),
         on_new_session: Box::new(new_session),
         overlay: config_file.overlay.enabled,
-        settings: Some(
-            settings::backend() as Arc<dyn glance_orchestrator::settings::SettingsBackend>
-        ),
+        settings: Some(settings::backend()),
+        models: Some(Arc::new(models::Models(models_panel))),
     };
     let handle = runtime.handle().clone();
     glance_macos::shell::run(options, move |key_events, shell| {
