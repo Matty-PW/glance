@@ -33,7 +33,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use crate::hotkeys::{self, Chords};
 
 const WIDTH: f64 = 540.0;
-const HEIGHT: f64 = 800.0;
+const HEIGHT: f64 = 890.0;
 const LABEL_X: f64 = 24.0;
 const LABEL_W: f64 = 160.0;
 const FIELD_X: f64 = 190.0;
@@ -48,6 +48,16 @@ const TAG_THINK: isize = 5;
 const TAG_APPLY_MODELS: isize = 6;
 const TAG_APPLY_HOTKEYS: isize = 7;
 const TAG_MANAGE_MODELS: isize = 8;
+const TAG_PERSONALITY: isize = 9;
+
+/// Preset names as saved, and as shown.
+const PERSONALITIES: [(&str, &str); 5] = [
+    ("neutral", "Neutral (as before)"),
+    ("friendly", "Friendly"),
+    ("direct", "Direct"),
+    ("strict", "Strict"),
+    ("custom", "Custom"),
+];
 
 const ENGINES: [(&str, &str); 2] = [("kokoro", "Kokoro"), ("system", "macOS system voice")];
 const EFFORTS: [&str; 4] = ["off", "low", "medium", "xhigh"];
@@ -98,6 +108,8 @@ struct Window {
     speed_label: Retained<NSTextField>,
     length: Retained<NSSlider>,
     length_label: Retained<NSTextField>,
+    personality: Retained<NSPopUpButton>,
+    personality_custom: Retained<NSTextField>,
     effort: Retained<NSPopUpButton>,
     idle: Retained<NSPopUpButton>,
     fast: Retained<NSPopUpButton>,
@@ -159,6 +171,20 @@ fn on_change(tag: isize) {
             TAG_LENGTH => {
                 w.show_length();
                 Some(backend.apply(SettingsChange::Length(w.length())))
+            }
+            TAG_PERSONALITY => {
+                let preset = PERSONALITIES[index(&w.personality, PERSONALITIES.len())].0;
+                let custom = w.personality_custom.stringValue().to_string();
+                w.personality_custom.setEnabled(preset == "custom");
+                if preset == "custom" && custom.trim().is_empty() {
+                    w.say("Type a style for Custom, then press Return.");
+                    None
+                } else {
+                    Some(backend.apply(SettingsChange::Personality {
+                        preset: preset.to_owned(),
+                        custom,
+                    }))
+                }
             }
             TAG_THINK => Some(backend.apply(SettingsChange::Think {
                 effort: EFFORTS[index(&w.effort, EFFORTS.len())].to_owned(),
@@ -287,6 +313,28 @@ impl Window {
             "Short, medium or long; \"walk me through\" or \"in detail\" always gets the full answer.",
             &mut y,
         ));
+        let at = row("Personality", &mut y);
+        let personality = popup(
+            mtm,
+            &PERSONALITIES.map(|(_, label)| label.to_owned()),
+            at,
+            &target,
+            TAG_PERSONALITY,
+        );
+        view.addSubview(&personality);
+        let at = row("Custom style", &mut y);
+        let personality_custom = NSTextField::textFieldWithString(&NSString::from_str(""), mtm);
+        personality_custom.setPlaceholderString(Some(&NSString::from_str(
+            "e.g. Calm and patient, like a good teacher",
+        )));
+        personality_custom.setFrame(rect(FIELD_X, at, FIELD_W));
+        connect(&personality_custom, &target, TAG_PERSONALITY);
+        view.addSubview(&personality_custom);
+        view.addSubview(&note(
+            mtm,
+            "Only how answers sound, never how long. Custom: up to 300 characters, press Return.",
+            &mut y,
+        ));
 
         header("Think harder", &mut y);
         let at = row("Reasoning effort", &mut y);
@@ -371,6 +419,8 @@ impl Window {
             speed_label,
             length,
             length_label,
+            personality,
+            personality_custom,
             effort,
             idle,
             fast,
@@ -406,6 +456,15 @@ impl Window {
             .unwrap_or(1);
         self.length.setDoubleValue(length as f64);
         self.show_length();
+        let personality = PERSONALITIES
+            .iter()
+            .position(|(p, _)| *p == values.personality)
+            .unwrap_or(0);
+        self.personality.selectItemAtIndex(personality as isize);
+        self.personality_custom
+            .setStringValue(&NSString::from_str(&values.personality_custom));
+        self.personality_custom
+            .setEnabled(values.personality == "custom");
         let effort = EFFORTS
             .iter()
             .position(|e| *e == values.deep_effort)
