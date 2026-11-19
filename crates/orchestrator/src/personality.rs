@@ -62,11 +62,19 @@ impl Personality {
     fn style(&self) -> Option<&str> {
         Some(match self {
             Self::Neutral => return None,
-            Self::Friendly => "Sound warm and friendly, like a helpful colleague.",
+            // The first wordings ("Sound warm and friendly, like a helpful
+            // colleague." and "Be strict and exact: say only what the screen
+            // supports, and say plainly when something is wrong.") dropped
+            // the exact type from an error (FAST eval 11/12 and 10/12), so
+            // both now ask for on-screen details word for word.
+            Self::Friendly => {
+                "Sound warm and friendly, like a helpful colleague, and keep names, numbers \
+                 and errors exactly as the screen shows them."
+            }
             Self::Direct => "Be direct: start with the answer itself, with no pleasantries.",
             Self::Strict => {
-                "Be strict and exact: say only what the screen supports, and say plainly when \
-                 something is wrong."
+                "Be strict and exact: give names, numbers and errors word for word as the \
+                 screen shows them, and say plainly when something is wrong."
             }
             Self::Custom(text) => text,
         })
