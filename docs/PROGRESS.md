@@ -98,6 +98,45 @@ Done:
   size plus 2 GB free; a cancelled, failed or quit download's partial file
   is removed. `ModelStore::remove` deletes only the manifest's listed
   files. Not yet checked by hand.
+- Personality (2026-11-19, `crates/orchestrator/src/personality.rs`):
+  `[models] personality` = neutral (default) | friendly | direct | strict |
+  custom, with `personality_custom` (up to 300 characters, cleaned to one
+  line). A style layer appended after the FAST, escalation and DEEP system
+  prompts; the prompts themselves are not edited. Neutral adds nothing
+  (prompts byte-identical, tested). Every other layer ends with the same
+  rule: plain spoken sentences, no emoji, no markdown, no lists. Length is
+  untouched (no length words in any layer; the cap test passes with a
+  personality). Settings: preset picker and custom field under Answers,
+  live from the next chord press. The style and the length hint are pinned
+  at the press, so a turn's prewarms and question always share one prompt.
+  FAST eval (qwen3-vl-4b, 12 ordinary + 6 hard, temperature 0; answers in
+  `eval-local/results/fast-persona-*.{json,md}`):
+
+  | Preset | Ordinary correct | Ordinary words (median) | Hard words (median) |
+  |---|---|---|---|
+  | neutral (baseline) | 12/12 | 10 | 63 |
+  | friendly, first wording | 11/12 | 12.5 | 58.5 |
+  | friendly, final | 12/12 | 10 | 67.5 |
+  | direct | 12/12 | 10 | 66.5 |
+  | strict, first wording | 10/12 | 10 | 59 |
+  | strict, final | 12/12 | 10 | 57.5 |
+  | custom ("Calm and patient, like a good teacher.") | 12/12 | 13 | 65.5 |
+
+  Friendly and strict at first dropped the exact type from the editor
+  error ("u64"); both now ask for names, numbers and errors exactly as on
+  screen. No emoji or markdown in any answer. On the 4B the styles are
+  light (wording, not substance).
+  DEEP cache after a change (`deep-bench --session --split-prewarm`, sheet,
+  Qwen3.8-27B, follow-ups on one screenshot): neutral 2774 tokens (30.4 s,
+  first look), neutral 150 (1.6 s), switch to friendly 3174 (34.5 s, one
+  full re-prefill, history included), friendly 159 and 154 (1.7 s). A
+  change costs DEEP one re-prefill on the next think-harder in a session,
+  the same as a new screenshot; FAST re-reads the image once (~0.1 s).
+  Found on the way, not caused by personality: a prewarm that goes back to
+  a shorter prefix than DEEP has cached (e.g. a think-harder tap re-asking
+  after a DEEP answer) re-prefills fully even with an unchanged prompt,
+  because the hybrid model can only resume from a saved checkpoint
+  (bench: 2695 of 2820 tokens). Not fixed; noted for M4.
 
 Left: check the models window by hand; rebuild the bundle and run the
 M2/M3 hands-on checks with the maintainer.

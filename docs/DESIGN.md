@@ -465,6 +465,13 @@ a header line on every answer. Both add ~10 tokens before the first spoken word,
 and the first needs a streaming JSON-string decoder. Tool-calling is rejected
 because v1 has no tools and server support varies.
 
+Personality (2026-11-19): a style layer appended after the system prompt
+of every tier (`glance_orchestrator::personality`). Neutral adds nothing;
+the others end with a fixed spoken-output rule (no emoji, markdown or
+lists) after any custom text. It never mentions length. The layer and the
+length hint are pinned per turn at the chord press, so prefix reuse breaks
+at most once per change and server.
+
 ### 7.4 Presets by RAM (design note, not built)
 
 Decided 2026-11-18: the default is one small model, FAST only; DEEP is
