@@ -3,8 +3,8 @@
 //! platform crate) sees only these types; the config file and the running
 //! pipeline stay on the app's side.
 //!
-//! Scope (maintainer, 2026-11-18): voice, answer length, models,
-//! think-harder options and hotkeys. Everything else is edited in
+//! Scope (maintainer, 2026-11-18): voice, answer length, personality,
+//! models, think-harder options and hotkeys. Everything else is edited in
 //! `config.toml`, which stays the source of truth.
 
 use crate::ResponseLength;
@@ -21,6 +21,10 @@ pub struct SettingsValues {
     /// Kokoro pace, 0.5 to 2.0.
     pub speed: f32,
     pub length: ResponseLength,
+    /// Preset name (see [`crate::personality::PRESETS`]) and the custom
+    /// text, kept even while another preset is chosen.
+    pub personality: String,
+    pub personality_custom: String,
     pub fast_model: String,
     pub deep_model: Option<String>,
     pub auto_escalate: bool,
@@ -51,6 +55,8 @@ pub enum SettingsChange {
         speed: f32,
     },
     Length(ResponseLength),
+    /// Preset name and custom text (used only by "custom").
+    Personality { preset: String, custom: String },
     Think {
         effort: String,
         idle_mins: u64,

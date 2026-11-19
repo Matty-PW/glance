@@ -22,6 +22,7 @@
 //! by a channel, which also keeps start/stop commands strictly in order.
 
 pub mod length;
+pub mod personality;
 mod report;
 mod session;
 pub mod settings;
@@ -46,6 +47,7 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::time::Instant;
 
 pub use length::ResponseLength;
+pub use personality::Personality;
 pub use report::{Outcome, TurnError, TurnReport};
 pub use session::SessionInfo;
 
@@ -274,6 +276,9 @@ pub struct TurnConfig {
     pub deep_nudge: Duration,
     /// How long spoken answers are, for FAST and DEEP (see [`length`]).
     pub response_length: ResponseLength,
+    /// How answers sound: a style layer at the end of every system prompt
+    /// (see [`personality`]). Neutral adds nothing.
+    pub personality: Personality,
 }
 
 impl Default for TurnConfig {
@@ -304,6 +309,7 @@ impl Default for TurnConfig {
             deep_idle: Duration::from_secs(10 * 60),
             deep_nudge: Duration::from_secs(12),
             response_length: ResponseLength::Medium,
+            personality: Personality::Neutral,
         }
     }
 }
@@ -330,6 +336,7 @@ enum Control {
     SetLength(ResponseLength),
     SetDeepEffort(Value),
     SetDeepIdle(Duration),
+    SetPersonality(Personality),
 }
 
 /// Commands to a running [`Orchestrator`] from outside the hotkeys (the
@@ -360,6 +367,12 @@ impl Controller {
     /// Change how long an on-demand DEEP may sit unused.
     pub fn set_deep_idle(&self, idle: Duration) {
         let _ = self.tx.send(Control::SetDeepIdle(idle));
+    }
+
+    /// Change the personality from the next chord press on (a turn already
+    /// under way keeps the one it started with).
+    pub fn set_personality(&self, personality: Personality) {
+        let _ = self.tx.send(Control::SetPersonality(personality));
     }
 }
 
@@ -474,6 +487,7 @@ impl Orchestrator {
                     Control::SetLength(length) => self.shared.live_mut().response_length = length,
                     Control::SetDeepEffort(kwargs) => self.shared.live_mut().deep_kwargs = Some(kwargs),
                     Control::SetDeepIdle(idle) => self.shared.live_mut().deep_idle = idle,
+                    Control::SetPersonality(p) => self.shared.live_mut().personality = p,
                 },
                 () = sleep_until(recording_cap) => {
                     // The recording cap: behave as if the chord was released.
@@ -515,6 +529,10 @@ impl Orchestrator {
         let turn = self.next_turn;
         self.next_turn += 1;
         let pressed_at = Instant::now();
+        // Fix the system prompt for this turn before anything is sent, so
+        // its prewarms and its question share one prompt (and one cached
+        // prefix), whatever changes in Settings meanwhile.
+        self.shared.pin_system();
         let mic_started = self.shared.mic.start();
         self.shared.show(Shown::Clear);
         // A reply follows soon: let the speech engine open its device now.

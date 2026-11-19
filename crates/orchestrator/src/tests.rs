@@ -85,6 +85,8 @@ impl SpeechToText for MockStt {
 #[derive(Debug, Clone, PartialEq)]
 struct SeenRequest {
     max_tokens: Option<u32>,
+    /// The whole system prompt (compared by the personality tests only).
+    system_text: String,
     /// Which system prompt: "plain", "escalation" or "deep".
     system: &'static str,
     /// `add_generation_prompt`, when the request sets it.
@@ -153,8 +155,13 @@ impl ChatModel for MockChat {
             .extra_body
             .get("add_generation_prompt")
             .and_then(serde_json::Value::as_bool);
+        let system_text = match request.messages.first().and_then(|m| m.parts.first()) {
+            Some(Part::Text(t)) => t.clone(),
+            _ => String::new(),
+        };
         self.seen.lock().unwrap().push(SeenRequest {
             max_tokens: request.max_tokens,
+            system_text,
             system,
             generation_prompt,
             layout,
@@ -527,12 +534,14 @@ async fn a_held_chord_is_answered_aloud_sentence_by_sentence() {
         [
             SeenRequest {
                 max_tokens: Some(1),
+                system_text: crate::SPOKEN_SYSTEM_PROMPT.into(),
                 system: "plain",
                 generation_prompt: None,
                 layout: vec!["U:img1".into()],
             },
             SeenRequest {
                 max_tokens: Some(200),
+                system_text: crate::SPOKEN_SYSTEM_PROMPT.into(),
                 system: "plain",
                 generation_prompt: None,
                 layout: vec!["U:img1+what is this window".into()],
@@ -1377,4 +1386,100 @@ async fn the_answer_length_can_change_while_running() {
     h.controller.set_response_length(Short);
     h.ask(Chord::Talk).await;
     assert_eq!(h.spoken().len(), 5 + 2);
+}
+
+fn with_personality(personality: crate::Personality) -> Setup {
+    Setup {
+        transcripts: vec!["what is this", "and this", "think harder"],
+        deep: Some(reply(&["Worked out."])),
+        config: TurnConfig {
+            min_press: Duration::from_millis(100),
+            personality,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn neutral_leaves_every_prompt_exactly_as_it_was() {
+    let mut h = Harness::new(with_personality(crate::Personality::Neutral));
+    h.ask(Chord::Talk).await;
+    h.ask(Chord::Think).await;
+    let fast = h.requests();
+    let deep = h.deep_requests.lock().unwrap().clone();
+    assert!(!fast.is_empty() && !deep.is_empty());
+    assert!(
+        fast.iter()
+            .all(|r| r.system_text == crate::SPOKEN_SYSTEM_PROMPT)
+    );
+    assert!(
+        deep.iter()
+            .all(|r| r.system_text == crate::DEEP_SYSTEM_PROMPT)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_personality_is_one_layer_after_fast_and_deep_prompts() {
+    let friendly = crate::Personality::Friendly;
+    let layer = friendly.layer().unwrap();
+    let mut h = Harness::new(with_personality(friendly));
+    h.ask(Chord::Talk).await;
+    h.ask(Chord::Think).await;
+    let fast = h.requests();
+    let deep = h.deep_requests.lock().unwrap().clone();
+    // Prewarms and questions alike.
+    assert!(fast.iter().any(|r| r.max_tokens == Some(1)));
+    assert!(deep.iter().any(|r| r.max_tokens == Some(1)));
+    for r in &fast {
+        assert_eq!(
+            r.system_text,
+            format!("{}{layer}", crate::SPOKEN_SYSTEM_PROMPT)
+        );
+    }
+    for r in &deep {
+        assert_eq!(
+            r.system_text,
+            format!("{}{layer}", crate::DEEP_SYSTEM_PROMPT)
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_mid_turn_waits_for_the_next_press() {
+    let direct = crate::Personality::Direct;
+    let layer = direct.layer().unwrap();
+    let mut h = Harness::new(with_personality(crate::Personality::Neutral));
+    // Changed while the key is held: this turn keeps its prompt, so its
+    // prewarm and question still share one prefix.
+    h.key(HotkeyEvent::Pressed(Chord::Talk));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    h.controller.set_personality(direct);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    h.key(HotkeyEvent::Released(Chord::Talk));
+    h.until_idle().await;
+    let first = h.requests();
+    assert!(first.len() >= 2);
+    assert!(
+        first
+            .iter()
+            .all(|r| r.system_text == crate::SPOKEN_SYSTEM_PROMPT)
+    );
+    // The next turn uses the new one throughout.
+    h.ask(Chord::Look).await;
+    let second: Vec<_> = h.requests().into_iter().skip(first.len()).collect();
+    assert!(second.len() >= 2);
+    let changed = format!("{}{layer}", crate::SPOKEN_SYSTEM_PROMPT);
+    assert!(second.iter().all(|r| r.system_text == changed));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn personality_does_not_change_the_length_cap() {
+    for personality in [crate::Personality::Neutral, crate::Personality::Strict] {
+        let mut setup = with_length(crate::ResponseLength::Short, vec!["what is this"], 5);
+        setup.config.personality = personality;
+        let mut h = Harness::new(setup);
+        h.ask(Chord::Talk).await;
+        assert_eq!(h.spoken().len(), 2);
+    }
 }

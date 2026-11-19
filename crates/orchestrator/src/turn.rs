@@ -63,6 +63,16 @@ pub(crate) struct Shared {
     pub(crate) config: TurnConfig,
     /// The settings that may change while glance runs.
     live: std::sync::RwLock<Live>,
+    /// The system-prompt settings of the current turn, copied from `live`
+    /// at the chord press (see [`Shared::pin_system`]).
+    pinned: std::sync::RwLock<Pinned>,
+}
+
+/// What the system prompt depends on beyond the fixed prompts.
+#[derive(Clone)]
+struct Pinned {
+    length: crate::ResponseLength,
+    personality: crate::Personality,
 }
 
 /// Settings the settings window changes live; they start from TurnConfig.
@@ -71,6 +81,7 @@ pub(crate) struct Live {
     /// Replaces DEEP's `chat_template_kwargs` when set.
     pub(crate) deep_kwargs: Option<Value>,
     pub(crate) deep_idle: Duration,
+    pub(crate) personality: crate::Personality,
 }
 
 impl Shared {
@@ -89,6 +100,11 @@ impl Shared {
                 response_length: config.response_length,
                 deep_kwargs: None,
                 deep_idle: config.deep_idle,
+                personality: config.personality.clone(),
+            }),
+            pinned: std::sync::RwLock::new(Pinned {
+                length: config.response_length,
+                personality: config.personality.clone(),
             }),
             config,
         }
@@ -100,6 +116,20 @@ impl Shared {
 
     pub(crate) fn live_mut(&self) -> std::sync::RwLockWriteGuard<'_, Live> {
         self.live.write().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Copy the live length and personality for the turn starting now.
+    /// Every request of the turn (FAST prewarm, DEEP prewarm, question,
+    /// escalation, "more") then has the same system prompt, so a change in
+    /// Settings costs each server one re-prefill, on its next request.
+    pub(crate) fn pin_system(&self) {
+        let live = self.live();
+        let pinned = Pinned {
+            length: live.response_length,
+            personality: live.personality.clone(),
+        };
+        drop(live);
+        *self.pinned.write().unwrap_or_else(|p| p.into_inner()) = pinned;
     }
 
     fn request(&self, tier: Tier, messages: Vec<Message>, max_tokens: u32) -> ChatRequest {
@@ -130,9 +160,14 @@ impl Shared {
             (Tier::Fast, true) => &self.config.escalation_prompt,
             (Tier::Fast, false) => &self.config.system_prompt,
         };
+        let pinned = self.pinned.read().unwrap_or_else(|p| p.into_inner());
         let mut prompt = prompt.clone();
-        if let Some(hint) = self.live().response_length.hint(tier == Tier::Deep) {
+        if let Some(hint) = pinned.length.hint(tier == Tier::Deep) {
             prompt.push_str(hint);
+        }
+        // The style layer goes last, after the instructions it must not edit.
+        if let Some(layer) = pinned.personality.layer() {
+            prompt.push_str(&layer);
         }
         Message::system(prompt)
     }
