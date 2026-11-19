@@ -20,6 +20,8 @@ pub struct SettingsValues {
     pub system_voice: Option<String>,
     /// Kokoro pace, 0.5 to 2.0.
     pub speed: f32,
+    /// Say maths symbols as words.
+    pub math_as_words: bool,
     pub length: ResponseLength,
     /// Preset name (see [`crate::personality::PRESETS`]) and the custom
     /// text, kept even while another preset is chosen.
@@ -55,6 +57,7 @@ pub enum SettingsChange {
         speed: f32,
     },
     Length(ResponseLength),
+    MathAsWords(bool),
     /// Preset name and custom text (used only by "custom").
     Personality {
         preset: String,

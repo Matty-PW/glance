@@ -82,6 +82,7 @@ pub(crate) struct Live {
     pub(crate) deep_kwargs: Option<Value>,
     pub(crate) deep_idle: Duration,
     pub(crate) personality: crate::Personality,
+    pub(crate) math_as_words: bool,
 }
 
 impl Shared {
@@ -101,6 +102,7 @@ impl Shared {
                 deep_kwargs: None,
                 deep_idle: config.deep_idle,
                 personality: config.personality.clone(),
+                math_as_words: config.math_as_words,
             }),
             pinned: std::sync::RwLock::new(Pinned {
                 length: config.response_length,
@@ -987,10 +989,16 @@ impl<'a> Voice<'a> {
         self.times
             .first_chunk
             .get_or_insert_with(|| self.key_up.elapsed());
+        // The voice may get maths in words; the overlay keeps the text.
+        let spoken = if self.shared.live().math_as_words {
+            std::borrow::Cow::Owned(crate::math_words::math_as_words(text))
+        } else {
+            std::borrow::Cow::Borrowed(text)
+        };
         let id = self
             .shared
             .tts
-            .speak(text)
+            .speak(&spoken)
             .map_err(|e| TurnError::Speech(e.to_string()))?;
         self.queued.push(id);
         self.texts.push((id, text.to_owned()));

@@ -22,6 +22,7 @@
 //! by a channel, which also keeps start/stop commands strictly in order.
 
 pub mod length;
+pub mod math_words;
 pub mod personality;
 mod report;
 mod session;
@@ -279,6 +280,8 @@ pub struct TurnConfig {
     /// How answers sound: a style layer at the end of every system prompt
     /// (see [`personality`]). Neutral adds nothing.
     pub personality: Personality,
+    /// Say maths symbols as words when speaking (see [`math_words`]).
+    pub math_as_words: bool,
 }
 
 impl Default for TurnConfig {
@@ -310,6 +313,7 @@ impl Default for TurnConfig {
             deep_nudge: Duration::from_secs(12),
             response_length: ResponseLength::Medium,
             personality: Personality::Neutral,
+            math_as_words: false,
         }
     }
 }
@@ -337,6 +341,7 @@ enum Control {
     SetDeepEffort(Value),
     SetDeepIdle(Duration),
     SetPersonality(Personality),
+    SetMathWords(bool),
 }
 
 /// Commands to a running [`Orchestrator`] from outside the hotkeys (the
@@ -373,6 +378,11 @@ impl Controller {
     /// under way keeps the one it started with).
     pub fn set_personality(&self, personality: Personality) {
         let _ = self.tx.send(Control::SetPersonality(personality));
+    }
+
+    /// Say maths symbols as words, from the next sentence spoken.
+    pub fn set_math_as_words(&self, on: bool) {
+        let _ = self.tx.send(Control::SetMathWords(on));
     }
 }
 
@@ -488,6 +498,7 @@ impl Orchestrator {
                     Control::SetDeepEffort(kwargs) => self.shared.live_mut().deep_kwargs = Some(kwargs),
                     Control::SetDeepIdle(idle) => self.shared.live_mut().deep_idle = idle,
                     Control::SetPersonality(p) => self.shared.live_mut().personality = p,
+                    Control::SetMathWords(on) => self.shared.live_mut().math_as_words = on,
                 },
                 () = sleep_until(recording_cap) => {
                     // The recording cap: behave as if the chord was released.

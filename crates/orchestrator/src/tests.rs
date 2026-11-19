@@ -1483,3 +1483,29 @@ async fn personality_does_not_change_the_length_cap() {
         assert_eq!(h.spoken().len(), 2);
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn maths_in_words_changes_only_what_is_spoken() {
+    let mut setup = Setup {
+        reply: reply(&["So 2 x 2 = 4. ", "Done."]),
+        ..Default::default()
+    };
+    setup.config.min_press = Duration::from_millis(100);
+    let mut h = Harness::new(setup);
+    h.ask(Chord::Talk).await;
+    assert_eq!(h.spoken(), ["So 2 x 2 = 4.", "Done."]);
+    h.controller.set_math_as_words(true);
+    h.ask(Chord::Talk).await;
+    assert_eq!(&h.spoken()[2..], ["So 2 times 2 equals 4.", "Done."]);
+    // The overlay shows the answer as written.
+    let mut said = Vec::new();
+    while let Ok(shown) = h.display.try_recv() {
+        if let crate::Shown::Said(text) = shown {
+            said.push(text);
+        }
+    }
+    assert!(
+        said.iter().filter(|t| *t == "So 2 x 2 = 4.").count() == 2,
+        "{said:?}"
+    );
+}

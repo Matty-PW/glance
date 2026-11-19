@@ -91,43 +91,45 @@ impl Personality {
     /// The style sentence(s) of a preset (custom: the user's text).
     fn style(&self) -> Option<String> {
         let fun = |character: &str| Some(format!("{character} {KEEP_FACTS}"));
-        Some(match self {
-            Self::Neutral => return None,
-            // The first wordings ("Sound warm and friendly, like a helpful
-            // colleague." and "Be strict and exact: say only what the screen
-            // supports, and say plainly when something is wrong.") dropped
-            // the exact type from an error (FAST eval 11/12 and 10/12), so
-            // both now ask for on-screen details word for word.
-            Self::Friendly => {
-                "Sound warm and friendly, like a helpful colleague, and keep names, numbers \
+        Some(
+            match self {
+                Self::Neutral => return None,
+                // The first wordings ("Sound warm and friendly, like a helpful
+                // colleague." and "Be strict and exact: say only what the screen
+                // supports, and say plainly when something is wrong.") dropped
+                // the exact type from an error (FAST eval 11/12 and 10/12), so
+                // both now ask for on-screen details word for word.
+                Self::Friendly => {
+                    "Sound warm and friendly, like a helpful colleague, and keep names, numbers \
                  and errors exactly as the screen shows them."
-            }
-            Self::Direct => "Be direct: start with the answer itself, with no pleasantries.",
-            Self::Strict => {
-                "Be strict and exact: give names, numbers and errors word for word as the \
+                }
+                Self::Direct => "Be direct: start with the answer itself, with no pleasantries.",
+                Self::Strict => {
+                    "Be strict and exact: give names, numbers and errors word for word as the \
                  screen shows them, and say plainly when something is wrong."
-            }
-            Self::Pirate => {
-                return fun(
-                    "Speak in character as a salty old pirate, with pirate words such as arr, \
+                }
+                Self::Pirate => {
+                    return fun(
+                        "Speak in character as a salty old pirate, with pirate words such as arr, \
                      matey, ye and me hearty.",
-                );
-            }
-            Self::Caveman => {
-                return fun(
-                    "Speak in character as a caveman: broken grammar, no little words like \
+                    );
+                }
+                Self::Caveman => {
+                    return fun(
+                        "Speak in character as a caveman: broken grammar, no little words like \
                      the or is, and me instead of I.",
-                );
-            }
-            Self::Shakespearean => {
-                return fun(
-                    "Speak in character as a player in a Shakespeare play, with thee, thou, \
+                    );
+                }
+                Self::Shakespearean => {
+                    return fun(
+                        "Speak in character as a player in a Shakespeare play, with thee, thou, \
                      thy, doth, hath and prithee.",
-                );
+                    );
+                }
+                Self::Custom(text) => text,
             }
-            Self::Custom(text) => text,
-        }
-        .to_owned())
+            .to_owned(),
+        )
     }
 
     /// What is appended to the system prompt; `None` for neutral.
@@ -170,7 +172,14 @@ mod tests {
 
     #[test]
     fn every_other_preset_ends_with_the_spoken_rule() {
-        for name in ["friendly", "direct", "strict", "pirate", "caveman", "shakespearean"] {
+        for name in [
+            "friendly",
+            "direct",
+            "strict",
+            "pirate",
+            "caveman",
+            "shakespearean",
+        ] {
             let p = Personality::parse(name, "").unwrap();
             assert_eq!(p.name(), name);
             let layer = p.layer().unwrap();
