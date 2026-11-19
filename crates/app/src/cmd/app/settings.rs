@@ -57,6 +57,7 @@ impl SettingsBackend for AppSettings {
             kokoro_voice: config.speech.voice.clone(),
             system_voice: config.speech.system_voice.clone(),
             speed: config.speech.speed,
+            math_as_words: config.speech.math_as_words,
             length: m.response_length(),
             personality: m.personality.clone(),
             personality_custom: m.personality_custom.clone(),
@@ -118,6 +119,13 @@ impl SettingsBackend for AppSettings {
                     SpeechControl::System(system) => system.set_voice(system_voice),
                 }
                 Ok(Applied::Live)
+            }
+            SettingsChange::MathAsWords(on) => {
+                self.save(&[("speech", "math_as_words", Some(Value::Bool(on)))])?;
+                live.map_or(Ok(Applied::NeedsRestart), |(controller, _)| {
+                    controller.set_math_as_words(on);
+                    Ok(Applied::Live)
+                })
             }
             SettingsChange::Length(length) => {
                 self.save(&[("models", "response_length", str_value(length.as_str()))])?;

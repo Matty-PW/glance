@@ -33,7 +33,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use crate::hotkeys::{self, Chords};
 
 const WIDTH: f64 = 540.0;
-const HEIGHT: f64 = 890.0;
+const HEIGHT: f64 = 900.0;
 const LABEL_X: f64 = 24.0;
 const LABEL_W: f64 = 160.0;
 const FIELD_X: f64 = 190.0;
@@ -49,13 +49,17 @@ const TAG_APPLY_MODELS: isize = 6;
 const TAG_APPLY_HOTKEYS: isize = 7;
 const TAG_MANAGE_MODELS: isize = 8;
 const TAG_PERSONALITY: isize = 9;
+const TAG_MATH_WORDS: isize = 10;
 
 /// Preset names as saved, and as shown.
-const PERSONALITIES: [(&str, &str); 5] = [
+const PERSONALITIES: [(&str, &str); 8] = [
     ("neutral", "Neutral (as before)"),
     ("friendly", "Friendly"),
     ("direct", "Direct"),
     ("strict", "Strict"),
+    ("pirate", "Pirate (fun)"),
+    ("caveman", "Caveman (fun)"),
+    ("shakespearean", "Shakespearean (fun)"),
     ("custom", "Custom"),
 ];
 
@@ -106,6 +110,7 @@ struct Window {
     voice: Retained<NSPopUpButton>,
     speed: Retained<NSSlider>,
     speed_label: Retained<NSTextField>,
+    math_words: Retained<NSButton>,
     length: Retained<NSSlider>,
     length_label: Retained<NSTextField>,
     personality: Retained<NSPopUpButton>,
@@ -172,6 +177,9 @@ fn on_change(tag: isize) {
                 w.show_length();
                 Some(backend.apply(SettingsChange::Length(w.length())))
             }
+            TAG_MATH_WORDS => Some(backend.apply(SettingsChange::MathAsWords(
+                w.math_words.state() == NSControlStateValueOn,
+            ))),
             TAG_PERSONALITY => {
                 let preset = PERSONALITIES[index(&w.personality, PERSONALITIES.len())].0;
                 let custom = w.personality_custom.stringValue().to_string();
@@ -301,6 +309,21 @@ impl Window {
         let speed_label = label(mtm, "", FIELD_X + FIELD_W - 50.0, at, 50.0);
         view.addSubview(&speed);
         view.addSubview(&speed_label);
+        let at = row("Maths", &mut y);
+        // SAFETY: no target yet; `connect` sets it under its rules.
+        let math_words = unsafe {
+            NSButton::checkboxWithTitle_target_action(
+                &NSString::from_str(
+                    "Say symbols as words: 2 × 2 = 4 is \u{201c}2 times 2 equals 4\u{201d}",
+                ),
+                None,
+                None,
+                mtm,
+            )
+        };
+        math_words.setFrame(rect(FIELD_X, at, FIELD_W + 10.0));
+        connect(&math_words, &target, TAG_MATH_WORDS);
+        view.addSubview(&math_words);
 
         header("Answers", &mut y);
         let at = row("Length", &mut y);
@@ -417,6 +440,7 @@ impl Window {
             voice,
             speed,
             speed_label,
+            math_words,
             length,
             length_label,
             personality,
@@ -450,6 +474,11 @@ impl Window {
         self.fill_voices();
         self.speed.setDoubleValue(f64::from(values.speed));
         self.show_speed();
+        self.math_words.setState(if values.math_as_words {
+            NSControlStateValueOn
+        } else {
+            NSControlStateValueOff
+        });
         let length = LENGTHS
             .iter()
             .position(|l| *l == values.length)

@@ -14,6 +14,7 @@
 //! threads = 10             # ONNX Runtime threads for Kokoro
 //! system_voice = "en-GB"   # for engine = "system": identifier or language
 //! system_rate = 0.5        # 0.0 (slow) to 1.0 (fast)
+//! math_as_words = false    # say "2 x 2 = 4" as "2 times 2 equals 4" (speech only)
 //!
 //! [models]
 //! fast = "qwen3-vl-4b-instruct-q4km"  # a vision model from models.toml; glance runs it
@@ -212,6 +213,8 @@ pub struct SpeechConfig {
     pub threads: usize,
     pub system_voice: Option<String>,
     pub system_rate: Option<f32>,
+    /// Say maths symbols as words (the voice only; the answer is unchanged).
+    pub math_as_words: bool,
 }
 
 impl Default for SpeechConfig {
@@ -229,6 +232,7 @@ impl Default for SpeechConfig {
                 .min(10),
             system_voice: None,
             system_rate: None,
+            math_as_words: false,
         }
     }
 }

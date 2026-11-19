@@ -202,6 +202,7 @@ async fn start(
         Err(e) => return fail(format!("speech model: {e}")),
     };
 
+    let math_as_words = settings.math_as_words;
     let settings = settings.clone();
     let started = tokio::task::spawn_blocking(move || speech::start(&settings)).await;
     let started = match started {
@@ -288,6 +289,7 @@ async fn start(
         auto_escalate: models.auto_escalate,
         response_length: models.response_length(),
         personality: models.personality(),
+        math_as_words,
         deep_idle: std::time::Duration::from_secs(models.deep_idle_secs),
         ..Default::default()
     };

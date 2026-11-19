@@ -45,7 +45,12 @@ pub fn run(args: Args) -> Result<()> {
 
     let started = Instant::now();
     for sentence in &sentences {
-        voice.speak(sentence)?;
+        // [speech] math_as_words, as in the app.
+        if settings.math_as_words {
+            voice.speak(&glance_orchestrator::math_words::math_as_words(sentence))?;
+        } else {
+            voice.speak(sentence)?;
+        }
     }
     if let Some(after) = args.stop_after_ms {
         let voice = std::sync::Arc::clone(&voice);
