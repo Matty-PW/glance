@@ -60,6 +60,12 @@ pub struct Args {
     /// response_length: short, medium (the default) or long.
     #[arg(long, default_value = "medium")]
     length: String,
+    /// personality: neutral (the default), friendly, direct, strict or
+    /// custom (with --personality-custom). Added the way the app adds it.
+    #[arg(long, default_value = "neutral")]
+    personality: String,
+    #[arg(long, default_value = "")]
+    personality_custom: String,
     /// JSON with every answer and timing; a side-by-side .md is written next
     /// to it. Keep it in the gitignored eval-local/.
     #[arg(long, default_value = "eval-local/results/fast-compare.json")]
@@ -310,6 +316,12 @@ async fn ask(
     let mut prompt = SPOKEN_SYSTEM_PROMPT.to_owned();
     if let Some(hint) = length.hint(false) {
         prompt.push_str(hint);
+    }
+    let personality =
+        glance_orchestrator::Personality::parse(&args.personality, &args.personality_custom)
+            .map_err(anyhow::Error::msg)?;
+    if let Some(layer) = personality.layer() {
+        prompt.push_str(&layer);
     }
     let system = Message::system(prompt);
     let (image, key_up, prewarm) = match fresh {

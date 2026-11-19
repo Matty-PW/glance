@@ -79,7 +79,8 @@ impl Personality {
     }
 }
 
-fn clean_custom(text: &str) -> Result<String, String> {
+/// Trim, put on one line and bound custom style text (see [`Personality::parse`]).
+pub fn clean_custom(text: &str) -> Result<String, String> {
     if text.chars().any(|c| c.is_control() && !c.is_whitespace()) {
         return Err("personality_custom must not contain control characters".into());
     }

@@ -58,6 +58,8 @@ impl SettingsBackend for AppSettings {
             system_voice: config.speech.system_voice.clone(),
             speed: config.speech.speed,
             length: m.response_length(),
+            personality: m.personality.clone(),
+            personality_custom: m.personality_custom.clone(),
             fast_model: m.fast.clone(),
             deep_model: m.deep.clone(),
             auto_escalate: m.auto_escalate,
@@ -121,6 +123,24 @@ impl SettingsBackend for AppSettings {
                 self.save(&[("models", "response_length", str_value(length.as_str()))])?;
                 live.map_or(Ok(Applied::NeedsRestart), |(controller, _)| {
                     controller.set_response_length(length);
+                    Ok(Applied::Live)
+                })
+            }
+            SettingsChange::Personality { preset, custom } => {
+                let personality = glance_orchestrator::Personality::parse(&preset, &custom)?;
+                // Saved cleaned (one line), and kept for later even when
+                // another preset is chosen.
+                let custom = if custom.trim().is_empty() {
+                    String::new()
+                } else {
+                    glance_orchestrator::personality::clean_custom(&custom)?
+                };
+                self.save(&[
+                    ("models", "personality", str_value(&preset)),
+                    ("models", "personality_custom", str_value(&custom)),
+                ])?;
+                live.map_or(Ok(Applied::NeedsRestart), |(controller, _)| {
+                    controller.set_personality(personality);
                     Ok(Applied::Live)
                 })
             }

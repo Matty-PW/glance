@@ -56,7 +56,10 @@ pub enum SettingsChange {
     },
     Length(ResponseLength),
     /// Preset name and custom text (used only by "custom").
-    Personality { preset: String, custom: String },
+    Personality {
+        preset: String,
+        custom: String,
+    },
     Think {
         effort: String,
         idle_mins: u64,

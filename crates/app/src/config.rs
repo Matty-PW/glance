@@ -25,6 +25,10 @@
 //!                                     # original answers (safety cap 8); long:
 //!                                     # no cap, more detail. "Walk me through" or
 //!                                     # "in detail" always lifts the cap.
+//! personality = "neutral"             # neutral | friendly | direct | strict | custom:
+//!                                     # a style added after the system prompt;
+//!                                     # neutral adds nothing. Never changes length.
+//! personality_custom = ""             # for "custom": up to 300 characters
 //! # Or use servers you run yourself (loopback only); these override fast/deep:
 //! # fast_endpoint = "http://127.0.0.1:8080/v1"
 //! # fast_model = "default"
@@ -113,11 +117,21 @@ pub struct ModelsConfig {
     pub deep_idle_secs: u64,
     /// short, medium or long (M5: a three-stop slider).
     pub response_length: String,
+    /// neutral, friendly, direct, strict or custom.
+    pub personality: String,
+    /// The style text for `personality = "custom"`.
+    pub personality_custom: String,
 }
 
 impl ModelsConfig {
     pub fn response_length(&self) -> glance_orchestrator::ResponseLength {
         glance_orchestrator::ResponseLength::parse(&self.response_length).unwrap_or_default()
+    }
+
+    /// Checked by [`Config::parse`]; neutral if it somehow is not valid.
+    pub fn personality(&self) -> glance_orchestrator::Personality {
+        glance_orchestrator::Personality::parse(&self.personality, &self.personality_custom)
+            .unwrap_or_default()
     }
 }
 
@@ -174,6 +188,8 @@ impl Default for ModelsConfig {
             auto_escalate: false,
             deep_idle_secs: 600,
             response_length: "medium".into(),
+            personality: "neutral".into(),
+            personality_custom: String::new(),
         }
     }
 }
@@ -287,6 +303,16 @@ impl Config {
                 config.models.response_length
             );
         }
+        glance_orchestrator::Personality::parse(
+            &config.models.personality,
+            &config.models.personality_custom,
+        )
+        .map_err(|e| anyhow::anyhow!("models.{e}"))?;
+        // Custom text is checked even while another preset is chosen.
+        if !config.models.personality_custom.trim().is_empty() {
+            glance_orchestrator::Personality::parse("custom", &config.models.personality_custom)
+                .map_err(|e| anyhow::anyhow!("models.{e}"))?;
+        }
         if !["off", "low", "medium", "xhigh"].contains(&config.models.deep_effort.as_str()) {
             bail!(
                 "models.deep_effort must be off, low, medium or xhigh, got \"{}\"",
@@ -362,5 +388,28 @@ mod tests {
         assert!(Config::parse("[speech]\nkokoro_model = \"fp16\"\n").is_err());
         assert!(Config::parse("[speech]\nvoice = \"../x\"\n").is_err());
         assert!(Config::parse("[speach]\n").is_err());
+    }
+
+    #[test]
+    fn personality_is_checked() {
+        use glance_orchestrator::Personality;
+        assert_eq!(
+            Config::parse("").unwrap().models.personality(),
+            Personality::Neutral
+        );
+        let c = Config::parse("[models]\npersonality = \"strict\"\n").unwrap();
+        assert_eq!(c.models.personality(), Personality::Strict);
+        let c = Config::parse(
+            "[models]\npersonality = \"custom\"\npersonality_custom = \"Calm, like a pilot.\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            c.models.personality(),
+            Personality::Custom("Calm, like a pilot.".into())
+        );
+        assert!(Config::parse("[models]\npersonality = \"custom\"\n").is_err());
+        assert!(Config::parse("[models]\npersonality = \"pirate\"\n").is_err());
+        let long = format!("[models]\npersonality_custom = \"{}\"\n", "a".repeat(301));
+        assert!(Config::parse(&long).is_err());
     }
 }
