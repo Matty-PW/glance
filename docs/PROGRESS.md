@@ -172,7 +172,10 @@ Done:
     a quieter line; long answers scroll and stay at their end. Fades and
     size eases on a ~30 Hz tick only while visible; none with Reduce
     Motion. Panel behaviour unchanged. `--overlay-demo` cycles all states
-    twice.
+    twice. Ready (2026-11-20, maintainer feedback: the label floated after
+    an empty gap): the waveform at rest, five flat pills at 60% of the
+    accent, still on purpose (Ready is up while the answer is read); the
+    bars come alive in place when listening starts.
   - Settings (`crates/macos/src/settings/`): sidebar window (Voice,
     Answers, Personality, Think harder, Models, Hotkeys, Appearance,
     About), Auto Layout, minimum 760×540, captioned rounded groups,

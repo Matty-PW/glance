@@ -455,18 +455,7 @@ impl Overlay {
         let t = self
             .frozen
             .unwrap_or_else(|| self.epoch.elapsed().as_secs_f64());
-        let still = self.reduce_motion;
-        match self.turn_state {
-            TurnState::Idle => Shape::Empty,
-            TurnState::Listening if still => Shape::Wave(motion::STILL_LISTENING),
-            TurnState::Listening => Shape::Wave(motion::listening_bars(&self.levels)),
-            TurnState::Transcribing | TurnState::Thinking if still => {
-                Shape::Dots(motion::STILL_THINKING)
-            }
-            TurnState::Transcribing | TurnState::Thinking => Shape::Dots(motion::thinking_dots(t)),
-            TurnState::Speaking if still => Shape::Equaliser(motion::STILL_SPEAKING),
-            TurnState::Speaking => Shape::Equaliser(motion::speaking_bars(t)),
-        }
+        glyph_for(self.turn_state, self.reduce_motion, t, &self.levels)
     }
 
     /// Text and layout after a change.
@@ -615,6 +604,22 @@ impl Overlay {
     }
 }
 
+/// The glyph for a state: `still` with Reduce Motion, `t` seconds into the
+/// animation, `levels` the recent mic levels (newest last).
+fn glyph_for(state: TurnState, still: bool, t: f64, levels: &[f32; 5]) -> Shape {
+    match state {
+        TurnState::Idle => Shape::Resting,
+        TurnState::Listening if still => Shape::Wave(motion::STILL_LISTENING),
+        TurnState::Listening => Shape::Wave(motion::listening_bars(levels)),
+        TurnState::Transcribing | TurnState::Thinking if still => {
+            Shape::Dots(motion::STILL_THINKING)
+        }
+        TurnState::Transcribing | TurnState::Thinking => Shape::Dots(motion::thinking_dots(t)),
+        TurnState::Speaking if still => Shape::Equaliser(motion::STILL_SPEAKING),
+        TurnState::Speaking => Shape::Equaliser(motion::speaking_bars(t)),
+    }
+}
+
 fn state_text(state: TurnState) -> &'static str {
     match state {
         TurnState::Idle => "Ready",
@@ -663,15 +668,58 @@ mod tests {
         assert_eq!(age(Duration::from_secs(130)), "2 min old");
     }
 
+    const STATES: [TurnState; 5] = [
+        TurnState::Idle,
+        TurnState::Listening,
+        TurnState::Transcribing,
+        TurnState::Thinking,
+        TurnState::Speaking,
+    ];
+
     #[test]
-    fn every_state_has_its_own_label() {
-        let states = [
+    fn ready_rests_and_differs_from_listening() {
+        // Ready is the resting waveform, moving or not, and never changes.
+        for still in [false, true] {
+            assert_eq!(
+                glyph_for(TurnState::Idle, still, 0.0, &[0.0; 5]),
+                Shape::Resting
+            );
+            assert_eq!(
+                glyph_for(TurnState::Idle, still, 3.7, &[0.1; 5]),
+                Shape::Resting
+            );
+            // Listening is never the resting picture, even in silence.
+            for levels in [[0.0; 5], [0.05; 5]] {
+                assert_ne!(
+                    glyph_for(TurnState::Listening, still, 0.0, &levels),
+                    Shape::Resting
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_reduce_motion_each_state_keeps_its_own_picture() {
+        // Transcribing and Thinking share the dots (both are "working").
+        let pictures: Vec<Shape> = [
             TurnState::Idle,
             TurnState::Listening,
-            TurnState::Transcribing,
             TurnState::Thinking,
             TurnState::Speaking,
-        ];
+        ]
+        .iter()
+        .map(|s| glyph_for(*s, true, 0.0, &[0.0; 5]))
+        .collect();
+        for (i, a) in pictures.iter().enumerate() {
+            for b in &pictures[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
+
+    #[test]
+    fn every_state_has_its_own_label() {
+        let states = STATES;
         let labels: std::collections::HashSet<_> = states.iter().map(|s| state_text(*s)).collect();
         assert_eq!(labels.len(), states.len());
     }

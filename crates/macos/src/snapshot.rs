@@ -66,7 +66,8 @@ pub fn overlay(out: &Path) -> Result<Vec<PathBuf>, String> {
     ]
     .join(" ")
     .repeat(3);
-    let states: [(&str, TurnState, Option<Progress>, &str, &str); 6] = [
+    let states: [(&str, TurnState, Option<Progress>, &str, &str); 7] = [
+        ("ready", TurnState::Idle, None, QUESTION, SHORT),
         ("listening", TurnState::Listening, None, "", ""),
         ("transcribing", TurnState::Transcribing, None, "", ""),
         ("thinking", TurnState::Thinking, None, QUESTION, ""),

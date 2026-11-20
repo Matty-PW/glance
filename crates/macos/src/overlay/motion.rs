@@ -59,6 +59,10 @@ pub fn speaking_bars(t: f64) -> [f64; 5] {
 pub const STILL_LISTENING: [f64; 5] = [0.35, 0.7, 1.0, 0.7, 0.35];
 pub const STILL_THINKING: [f64; 3] = [1.0, 0.6, 0.3];
 pub const STILL_SPEAKING: [f64; 5] = [0.45, 0.8, 0.6, 0.9, 0.5];
+/// Ready: the waveform at rest is drawn at this share of the accent, so it
+/// reads as waiting next to the moving states. It never moves: Ready is up
+/// while the answer is being read.
+pub const RESTING_ALPHA: f64 = 0.6;
 
 #[cfg(test)]
 mod tests {
