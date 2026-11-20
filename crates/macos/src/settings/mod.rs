@@ -16,6 +16,7 @@
 
 mod about;
 mod ui;
+mod voice;
 
 use std::cell::RefCell;
 
@@ -101,6 +102,7 @@ fn sections(ui: &Ui<'_>) -> Vec<Box<dyn Section>> {
         target: ui.target,
         page: i as isize,
     };
+    list.push(Box::new(voice::Voice::new(&page(list.len()))));
     list.push(Box::new(about::About::new(&page(list.len()))));
     list
 }
@@ -295,6 +297,15 @@ impl Window {
         unsafe { window.setReleasedWhenClosed(false) };
         let content = NSView::initWithFrame(NSView::alloc(mtm), frame);
         window.setContentView(Some(&content));
+        // The window background, drawn by the content itself so snapshots
+        // (which draw only the content view) match the real window.
+        let backdrop = NSBox::new(mtm);
+        backdrop.setBoxType(NSBoxType::Custom);
+        backdrop.setTitlePosition(NSTitlePosition::NoTitle);
+        backdrop.setBorderWidth(0.0);
+        backdrop.setFillColor(&NSColor::windowBackgroundColor());
+        content.addSubview(&backdrop);
+        pin(&backdrop, &content, 0.0);
         let target = Target::new(mtm);
         let ui = Ui {
             mtm,
