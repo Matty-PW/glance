@@ -16,6 +16,7 @@
 
 mod about;
 mod answers;
+mod appearance;
 mod hotkeys;
 mod models;
 mod personality;
@@ -56,6 +57,8 @@ pub(crate) enum Reply {
     Say(String),
     /// Saved; glance restarts now (models).
     Restart,
+    /// Saved (or not); the window is rebuilt in the new accent.
+    Repaint(Result<Applied, String>),
 }
 
 /// One section of the window.
@@ -113,6 +116,7 @@ fn sections(ui: &Ui<'_>) -> Vec<Box<dyn Section>> {
     list.push(Box::new(think::Think::new(&page(list.len()))));
     list.push(Box::new(models::Models::new(&page(list.len()))));
     list.push(Box::new(hotkeys::Hotkeys::new(&page(list.len()))));
+    list.push(Box::new(appearance::Appearance::new(&page(list.len()))));
     list.push(Box::new(about::About::new(&page(list.len()))));
     list
 }
@@ -262,6 +266,27 @@ fn show_reply(reply: Reply) {
                 w.say("Saved. Restarting glance…");
                 DispatchQueue::main().exec_async(crate::shell::relaunch);
             }
+            Reply::Repaint(Err(e)) => w.say(&format!("Not saved: {e}")),
+            Reply::Repaint(Ok(_)) => {
+                // Controls keep the colour they were given, so build the
+                // window again and come back to the same section.
+                let name = w.sections[w.current].name();
+                DispatchQueue::main().exec_async(move || rebuild(name));
+            }
+        }
+    });
+}
+
+fn rebuild(section: &'static str) {
+    WINDOW.with_borrow_mut(|w| {
+        if let Some(old) = w.take() {
+            old.window.orderOut(None);
+        }
+    });
+    open_section(Some(section));
+    WINDOW.with_borrow(|w| {
+        if let Some(w) = w.as_ref() {
+            w.say("Saved.");
         }
     });
 }
