@@ -18,7 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSAppearance, NSColor};
+use objc2::runtime::Bool;
+use objc2_app_kit::{NSAppearance, NSBezierPath, NSColor, NSImage, NSImageResizingMode};
+use objc2_foundation::{NSEdgeInsets, NSRect, NSSize};
 
 /// The accent in light mode: a warm orange-coral.
 pub const ACCENT_LIGHT: u32 = 0xD85A30;
@@ -86,6 +88,28 @@ pub fn on_accent() -> Retained<NSColor> {
         return NSColor::alternateSelectedControlTextColor();
     }
     NSColor::blackColor()
+}
+
+/// A stretchable rounded-rectangle mask (for a visual effect view's
+/// corners). Only its alpha matters.
+pub fn rounded_mask(radius: f64) -> Retained<NSImage> {
+    let side = radius * 2.0 + 1.0;
+    let draw = RcBlock::new(move |rect: NSRect| -> Bool {
+        NSColor::blackColor().setFill();
+        NSBezierPath::bezierPathWithRoundedRect_xRadius_yRadius(rect, radius, radius).fill();
+        Bool::YES
+    });
+    let image =
+        NSImage::imageWithSize_flipped_drawingHandler(NSSize::new(side, side), false, &draw);
+    image.setCapInsets(NSEdgeInsets {
+        top: radius,
+        left: radius,
+        bottom: radius,
+        right: radius,
+    });
+    // Stretch the middle, keep the corners.
+    image.setResizingMode(NSImageResizingMode(1));
+    image
 }
 
 /// WCAG 2 relative luminance of an sRGB colour.

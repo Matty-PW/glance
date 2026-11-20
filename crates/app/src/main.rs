@@ -59,6 +59,8 @@ enum Command {
         #[command(subcommand)]
         action: Option<cmd::say::VoicesAction>,
     },
+    /// Draw glance's own windows (demo text) to PNGs for layout review.
+    UiSnapshots(cmd::ui_snapshots::Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -77,6 +79,7 @@ fn main() -> anyhow::Result<()> {
         Command::CaptureCheck(args) => cmd::capture_check::run(args),
         Command::Say(args) => cmd::say::run(args),
         Command::Voices { action } => cmd::say::voices(action),
+        Command::UiSnapshots(args) => cmd::ui_snapshots::run(args),
         Command::Spike(args) => {
             // The spike speaks, and macOS delivers speech events on the main
             // thread's run loop. So the pipeline runs on the runtime's worker

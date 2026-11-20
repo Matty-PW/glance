@@ -13,6 +13,7 @@ pub mod speech;
 pub mod spike;
 pub mod stt_bench;
 pub mod tts_bench;
+pub mod ui_snapshots;
 
 use std::time::Instant;
 

@@ -21,6 +21,7 @@ mod overlay;
 pub mod permission;
 mod settings;
 pub mod shell;
+pub mod snapshot;
 pub mod system_voice;
 pub mod theme;
 mod tray;

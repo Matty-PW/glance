@@ -337,27 +337,59 @@ fn new_session() {
     }
 }
 
-/// `--overlay-demo`: a scripted turn with fixed text, through the real shell.
+/// `--overlay-demo`: scripted turns with fixed text, through the real shell,
+/// cycling Listening (with a made-up mic level), Thinking and Speaking,
+/// twice: a short answer, then a "think harder" one with a longer answer.
 async fn overlay_demo(shell: Arc<dyn Shell>) {
-    use glance_orchestrator::Shown;
+    use glance_orchestrator::{Progress, Shown};
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
     let pause = |ms| tokio::time::sleep(Duration::from_millis(ms));
+    let rounds: [(&str, Option<Progress>, &[&str]); 2] = [
+        (
+            "What does this chart show?",
+            None,
+            &[
+                "Weekly active users rose from 1,240 to 1,720 over four weeks.",
+                "Week three dipped slightly before the biggest jump in week four.",
+            ],
+        ),
+        (
+            "Think harder: why did week three dip?",
+            Some(Progress::ThinkingHarder),
+            &[
+                "Week three is the only week where sign-ups fell, from 410 to 365.",
+                "The note under the chart says the onboarding email was paused that week.",
+                "Returning users held steady, so the dip comes from fewer new users, not lost ones.",
+                "When the email came back in week four, sign-ups jumped to 520.",
+            ],
+        ),
+    ];
     pause(1500).await;
-    shell.display(&Shown::Clear);
-    shell.update(&Update::State(TurnState::Listening));
-    pause(1500).await;
-    shell.display(&Shown::Asked("What does this chart show?".into()));
-    shell.update(&Update::State(TurnState::Thinking));
-    pause(700).await;
-    shell.update(&Update::State(TurnState::Speaking));
-    for sentence in [
-        "Weekly active users rose from 1,240 to 1,720 over four weeks.",
-        "Week three dipped slightly before the biggest jump in week four.",
-    ] {
-        shell.display(&Shown::Said(sentence.into()));
-        pause(1800).await;
+    for (question, progress, sentences) in rounds {
+        shell.display(&Shown::Clear);
+        DEMO_RUNNING.store(true, Ordering::Relaxed);
+        shell.update(&Update::State(TurnState::Listening));
+        pause(2500).await;
+        DEMO_RUNNING.store(false, Ordering::Relaxed);
+        shell.update(&Update::State(TurnState::Transcribing));
+        pause(400).await;
+        shell.display(&Shown::Asked(question.into()));
+        shell.update(&Update::State(TurnState::Thinking));
+        if let Some(progress) = progress {
+            shell.update(&Update::Progress(progress));
+        }
+        pause(2200).await;
+        shell.update(&Update::State(TurnState::Speaking));
+        for sentence in sentences {
+            shell.display(&Shown::Said((*sentence).into()));
+            pause(1800).await;
+        }
+        shell.update(&Update::State(TurnState::Idle));
+        // The overlay fades out 6 s after a turn; start the next one first
+        // so both rounds can be compared.
+        pause(3000).await;
     }
-    shell.update(&Update::State(TurnState::Idle));
 }
 
 /// Orchestrator updates to the shell, plus the per-turn log line.
