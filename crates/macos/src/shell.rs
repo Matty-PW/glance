@@ -260,12 +260,12 @@ pub(crate) fn relaunch() {
 
 /// Show the settings window (tray menu, or `--open-settings`).
 pub fn open_settings() {
-    dispatch2::DispatchQueue::main().exec_async(crate::settings_legacy::open);
+    dispatch2::DispatchQueue::main().exec_async(crate::settings::open);
 }
 
 /// Show the models window (tray menu, or `--open-models`).
 pub fn open_models() {
-    dispatch2::DispatchQueue::main().exec_async(crate::models_window::open);
+    dispatch2::DispatchQueue::main().exec_async(|| crate::settings::open_section(Some("Models")));
 }
 
 /// "New session" (tray menu).
