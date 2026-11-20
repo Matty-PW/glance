@@ -93,6 +93,8 @@ pub enum Applied {
 /// Implemented by the app: read the settings, save and apply changes.
 pub trait SettingsBackend: Send + Sync {
     fn current(&self) -> (SettingsValues, SettingsChoices);
+    /// What a fresh config.toml would hold ("Restore defaults").
+    fn defaults(&self) -> SettingsValues;
     /// Save the change to config.toml and apply what can be applied live.
     /// The error text is shown in the window.
     fn apply(&self, change: SettingsChange) -> Result<Applied, String>;

@@ -7,7 +7,9 @@
 #![allow(unsafe_code)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
 use glance_orchestrator::{Progress, TurnState};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -87,6 +89,36 @@ pub fn overlay(out: &Path) -> Result<Vec<PathBuf>, String> {
                     .ok_or("overlay not installed")?;
             let mode = if dark { "dark" } else { "light" };
             let path = out.join(format!("overlay-{name}-{mode}.png"));
+            save_view(&view, &path)?;
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+
+/// Render every settings section in light and dark into `out`, using the
+/// given (demo) backends. Main thread.
+pub fn settings(
+    out: &Path,
+    settings: Arc<dyn SettingsBackend>,
+    models: Arc<dyn ModelsBackend>,
+) -> Result<Vec<PathBuf>, String> {
+    let mtm = MainThreadMarker::new().ok_or("must run on the main thread")?;
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    crate::shell::install_backends(settings, models);
+    let mut written = Vec::new();
+    let count = crate::settings::stage(0, false)
+        .ok_or("no settings window")?
+        .2;
+    let names = crate::settings::section_names();
+    for dark in [false, true] {
+        for (i, name) in names.iter().enumerate().take(count) {
+            let (_window, view, _) = crate::settings::stage(i, dark).ok_or("no settings window")?;
+            let mode = if dark { "dark" } else { "light" };
+            let file = name.to_lowercase().replace(' ', "-");
+            let path = out.join(format!("settings-{file}-{mode}.png"));
             save_view(&view, &path)?;
             written.push(path);
         }

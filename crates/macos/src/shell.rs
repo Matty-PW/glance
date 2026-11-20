@@ -53,6 +53,12 @@ static MODELS: OnceLock<Arc<dyn ModelsBackend>> = OnceLock::new();
 type LevelSource = Box<dyn Fn() -> f32 + Send + Sync>;
 static MIC_LEVEL: OnceLock<LevelSource> = OnceLock::new();
 
+/// `glance ui-snapshots`: use these backends (no app is running).
+pub(crate) fn install_backends(settings: Arc<dyn SettingsBackend>, models: Arc<dyn ModelsBackend>) {
+    let _ = SETTINGS.set(settings);
+    let _ = MODELS.set(models);
+}
+
 /// The microphone level now (0 without a source).
 pub(crate) fn mic_level() -> f32 {
     MIC_LEVEL.get().map_or(0.0, |level| level())
@@ -254,7 +260,7 @@ pub(crate) fn relaunch() {
 
 /// Show the settings window (tray menu, or `--open-settings`).
 pub fn open_settings() {
-    dispatch2::DispatchQueue::main().exec_async(crate::settings::open);
+    dispatch2::DispatchQueue::main().exec_async(crate::settings_legacy::open);
 }
 
 /// Show the models window (tray menu, or `--open-models`).

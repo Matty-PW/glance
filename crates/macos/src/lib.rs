@@ -20,6 +20,7 @@ mod models_window;
 mod overlay;
 pub mod permission;
 mod settings;
+mod settings_legacy;
 pub mod shell;
 pub mod snapshot;
 pub mod system_voice;

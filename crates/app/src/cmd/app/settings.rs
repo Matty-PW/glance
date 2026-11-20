@@ -47,37 +47,51 @@ impl SettingsBackend for AppSettings {
             eprintln!("glance: settings: {e:#}; showing defaults");
             Config::default()
         });
-        let m = &config.models;
-        let values = SettingsValues {
-            engine: match config.speech.engine {
-                Engine::Kokoro => "kokoro",
-                Engine::System => "system",
-            }
-            .to_owned(),
-            kokoro_voice: config.speech.voice.clone(),
-            system_voice: config.speech.system_voice.clone(),
-            speed: config.speech.speed,
-            math_as_words: config.speech.math_as_words,
-            length: m.response_length(),
-            personality: m.personality.clone(),
-            personality_custom: m.personality_custom.clone(),
-            fast_model: m.fast.clone(),
-            deep_model: m.deep.clone(),
-            auto_escalate: m.auto_escalate,
-            deep_effort: m.deep_effort.clone(),
-            deep_thinking_budget: m.thinking_budget(),
-            deep_idle_mins: (m.deep_idle_secs / 60).max(1),
-            hotkeys: [
-                config.hotkeys.talk.clone(),
-                config.hotkeys.look.clone(),
-                config.hotkeys.think.clone(),
-            ],
-            accent: config.appearance.accent.clone(),
-        };
-        (values, choices())
+        (values_of(&config), choices())
+    }
+
+    fn defaults(&self) -> SettingsValues {
+        values_of(&Config::default())
     }
 
     fn apply(&self, change: SettingsChange) -> Result<Applied, String> {
+        self.apply_change(change)
+    }
+}
+
+/// The settings window's view of a config.
+fn values_of(config: &Config) -> SettingsValues {
+    let m = &config.models;
+    SettingsValues {
+        engine: match config.speech.engine {
+            Engine::Kokoro => "kokoro",
+            Engine::System => "system",
+        }
+        .to_owned(),
+        kokoro_voice: config.speech.voice.clone(),
+        system_voice: config.speech.system_voice.clone(),
+        speed: config.speech.speed,
+        math_as_words: config.speech.math_as_words,
+        length: m.response_length(),
+        personality: m.personality.clone(),
+        personality_custom: m.personality_custom.clone(),
+        fast_model: m.fast.clone(),
+        deep_model: m.deep.clone(),
+        auto_escalate: m.auto_escalate,
+        deep_effort: m.deep_effort.clone(),
+        deep_thinking_budget: m.thinking_budget(),
+        deep_idle_mins: (m.deep_idle_secs / 60).max(1),
+        hotkeys: [
+            config.hotkeys.talk.clone(),
+            config.hotkeys.look.clone(),
+            config.hotkeys.think.clone(),
+        ],
+        accent: config.appearance.accent.clone(),
+    }
+}
+
+impl AppSettings {
+    fn apply_change(&self, change: SettingsChange) -> Result<Applied, String> {
         let live = self.live.get();
         match change {
             SettingsChange::Voice {

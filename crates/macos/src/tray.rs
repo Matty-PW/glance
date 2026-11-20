@@ -314,7 +314,7 @@ fn on_menu(id: &str) {
         ID_SCREEN => open_settings(SCREEN_SETTINGS),
         ID_MIC => open_settings(MIC_SETTINGS),
         ID_NEW_SESSION => crate::shell::new_session(),
-        ID_SETTINGS => DispatchQueue::main().exec_async(crate::settings::open),
+        ID_SETTINGS => DispatchQueue::main().exec_async(crate::settings_legacy::open),
         ID_MODELS => DispatchQueue::main().exec_async(crate::models_window::open),
         ID_QUIT => DispatchQueue::main().exec_async(crate::shell::quit),
         _ => {}

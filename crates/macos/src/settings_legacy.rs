@@ -79,7 +79,7 @@ define_class!(
     // - `Target` has no state and does not implement `Drop`.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "GlanceSettingsTarget"]
+    #[name = "GlanceLegacySettingsTarget"]
     struct Target;
 
     unsafe impl NSObjectProtocol for Target {}
