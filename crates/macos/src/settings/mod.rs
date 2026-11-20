@@ -15,6 +15,7 @@
 #![allow(unsafe_code)]
 
 mod about;
+mod answers;
 mod ui;
 mod voice;
 
@@ -103,6 +104,7 @@ fn sections(ui: &Ui<'_>) -> Vec<Box<dyn Section>> {
         page: i as isize,
     };
     list.push(Box::new(voice::Voice::new(&page(list.len()))));
+    list.push(Box::new(answers::Answers::new(&page(list.len()))));
     list.push(Box::new(about::About::new(&page(list.len()))));
     list
 }
