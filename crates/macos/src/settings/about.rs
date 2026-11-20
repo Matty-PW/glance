@@ -64,7 +64,7 @@ impl About {
         ui::auto(&scroll);
         ui::activate(&[scroll.heightAnchor().constraintEqualToConstant(260.0)]);
         let notices: Retained<NSView> = Retained::into_super(scroll);
-        page.group(mtm, "Third-party notices", &[notices.clone()]);
+        page.group(mtm, "Third-party notices", std::slice::from_ref(&notices));
 
         Self {
             page,

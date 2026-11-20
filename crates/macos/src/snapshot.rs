@@ -123,5 +123,15 @@ pub fn settings(
             written.push(path);
         }
     }
+    // The worst case for clipping: the smallest window, longest names.
+    crate::settings::set_minimum_size(true);
+    for (i, name) in names.iter().enumerate().take(count) {
+        let (_window, view, _) = crate::settings::stage(i, false).ok_or("no settings window")?;
+        let file = name.to_lowercase().replace(' ', "-");
+        let path = out.join(format!("settings-{file}-min-size.png"));
+        save_view(&view, &path)?;
+        written.push(path);
+    }
+    crate::settings::set_minimum_size(false);
     Ok(written)
 }

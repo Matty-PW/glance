@@ -550,6 +550,21 @@ pub(crate) fn stage(
     })
 }
 
+/// For `glance ui-snapshots`: the window at its minimum size, or its
+/// usual one.
+pub(crate) fn set_minimum_size(on: bool) {
+    WINDOW.with_borrow(|w| {
+        if let Some(w) = w.as_ref() {
+            let size = if on {
+                NSSize::new(MIN_W, MIN_H)
+            } else {
+                NSSize::new(840.0, 640.0)
+            };
+            w.window.setContentSize(size);
+        }
+    });
+}
+
 /// The section names, in order (for snapshot file names).
 pub(crate) fn section_names() -> Vec<&'static str> {
     WINDOW.with_borrow(|w| {

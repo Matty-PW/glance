@@ -23,8 +23,9 @@ use crate::theme;
 /// Width of the control column, so long names truncate instead of pushing
 /// the layout around.
 pub const CONTROL_W: f64 = 260.0;
-/// Secondary text wraps at this width.
-pub const TEXT_W: f64 = 300.0;
+/// Secondary text wraps at this width: what the text column has left at
+/// the minimum window size, so a line never clips.
+pub const TEXT_W: f64 = 200.0;
 
 define_class!(
     // SAFETY:

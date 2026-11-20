@@ -158,6 +158,11 @@ impl Models {
             let delete = ui.button("Delete", id(DELETE), false);
             let title = ui::label(mtm, "");
             title.setFont(Some(&NSFont::boldSystemFontOfSize(13.0)));
+            // As much of the id as fits beside the buttons.
+            title.setContentCompressionResistancePriority_forOrientation(
+                500.0,
+                NSLayoutConstraintOrientation::Horizontal,
+            );
             let detail = ui::secondary(mtm, "", ui::TEXT_W);
             let icon = NSImageView::new(mtm);
             icon.setContentTintColor(Some(&NSColor::secondaryLabelColor()));
