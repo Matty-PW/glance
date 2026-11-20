@@ -15,7 +15,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
-| M5: overlay, settings, model management | **In progress.** Platform split, overlay, settings window and models panel done; hands-on checks next |
+| M5: overlay, settings, model management | **In progress.** Platform split, overlay, settings, models panel and visual redesign done; hands-on checks next |
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -153,8 +153,45 @@ Done:
   because the hybrid model can only resume from a saved checkpoint
   (bench: 2695 of 2820 tokens). Not fixed; noted for M4.
 
-Left: check the models window by hand; rebuild the bundle and run the
-M2/M3 hands-on checks with the maintainer.
+- Visual redesign (2026-11-20; plan approved by the maintainer; layout and
+  look only, no behaviour, hotkey or pipeline change):
+  - Accent (`crates/macos/src/theme.rs`, the only colour values in
+    glance-macos): light #D85A30, dark #EE7A50. WCAG: black text on accent
+    5.42 (light) and 7.54 (dark); white would fail (3.87, 2.79), so text on
+    accent is black. Accent against window backgrounds: 3.87/3.28 light,
+    5.98/4.60 dark (non-text needs 3). Unit tests check these from the
+    constants. `[appearance] accent = "glance" | "system"` (new key, asked
+    for), live. Checkboxes, switches and focus rings always follow the macOS
+    accent (an app needs an asset catalog, i.e. full Xcode, to change them).
+    New direct dependency block2 0.6.2 (already in the tree).
+  - Overlay (`crates/macos/src/overlay/`): popover-material blur, rounded
+    corners, hairline border (solid with Reduce Transparency); status row
+    with an accent glyph and label per state: Listening = waveform from the
+    live mic level (`glance_audio::LevelMeter`, one number, never logged),
+    Thinking/Transcribing = pulsing dots, Speaking = equaliser; question on
+    a quieter line; long answers scroll and stay at their end. Fades and
+    size eases on a ~30 Hz tick only while visible; none with Reduce
+    Motion. Panel behaviour unchanged. `--overlay-demo` cycles all states
+    twice.
+  - Settings (`crates/macos/src/settings/`): sidebar window (Voice,
+    Answers, Personality, Think harder, Models, Hotkeys, Appearance,
+    About), Auto Layout, minimum 760×540, captioned rounded groups,
+    "Restart to apply" on rows that need it, Restore defaults… per section
+    (confirmed; `SettingsBackend::defaults()`), keycap hotkeys with the same
+    rollback, the models window merged into the Models page (tray
+    "Models…" opens it), About with version, licences and third-party
+    notices. The old settings and models windows are removed.
+  - `glance ui-snapshots` draws glance's own windows (demo text, longest
+    names, light, dark and minimum size) to `eval-local/ui/`; never captures
+    the screen. Blur is not drawn in-process (solid fallback shown).
+  - Found and fixed on the way: two rare test races (stale-server temp
+    dirs sharing a name; a mic-start count read before the worker ran).
+  Not yet checked by hand: the real overlay over light and dark apps,
+  Reduce Motion / Reduce Transparency, hotkey change and Restore defaults
+  from the new window.
+
+Left: check the redesign by hand; rebuild the bundle and run the M2/M3
+hands-on checks with the maintainer.
 
 ## M4 (in progress)
 

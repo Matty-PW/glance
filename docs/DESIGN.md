@@ -558,7 +558,14 @@ entry is committed.
 Boundary: the manifest governs what glance downloads and what it spawns. Models
 managed by Ollama or LM Studio are that tool's responsibility.
 
-## 9. UI: egui vs Tauri → egui
+## 9. UI: egui vs Tauri → egui (superseded in M5: native AppKit)
+
+M5 note (2026-11-18/20): the UI is native AppKit in `glance-macos`
+(non-activating NSPanel overlay, sidebar settings window), behind the
+`Shell`, `SettingsBackend` and `ModelsBackend` traits; the look is one
+accent colour in `theme.rs` plus semantic system colours, Auto Layout, and
+Reduce Motion / Reduce Transparency respected. The comparison below is
+kept for the record.
 
 | | egui / eframe 0.37 | Tauri 2.12 |
 |---|---|---|
