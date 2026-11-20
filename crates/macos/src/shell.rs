@@ -122,6 +122,7 @@ pub fn run(
         on_new_session: options.on_new_session,
     });
     if let Some(settings) = options.settings {
+        crate::theme::set_system_accent(settings.current().0.accent == "system");
         let _ = SETTINGS.set(settings);
     }
     if let Some(models) = options.models {

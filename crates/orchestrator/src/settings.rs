@@ -35,6 +35,8 @@ pub struct SettingsValues {
     pub deep_thinking_budget: Option<u32>,
     pub deep_idle_mins: u64,
     pub hotkeys: [String; 3],
+    /// "glance" (glance's accent colour) or "system" (the macOS accent).
+    pub accent: String,
 }
 
 /// What can be picked.
@@ -69,6 +71,8 @@ pub enum SettingsChange {
     },
     /// Already registered by the platform crate when this arrives.
     Hotkeys([String; 3]),
+    /// "glance" or "system"; the platform crate repaints.
+    Accent(String),
     /// Applied by restarting glance.
     Models {
         fast: String,

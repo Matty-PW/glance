@@ -44,6 +44,9 @@
 //! [overlay]
 //! enabled = true                # the floating panel with question and answer
 //!
+//! [appearance]
+//! accent = "glance"             # or "system": the macOS accent colour
+//!
 //! [hotkeys]                     # modifiers Ctrl, Opt, Shift, Cmd, then one key
 //! talk = "Ctrl+Opt+G"           # ask about the screenshot
 //! look = "Ctrl+Opt+Shift+G"     # take a fresh look and ask
@@ -64,6 +67,7 @@ pub struct Config {
     pub models: ModelsConfig,
     pub hotkeys: HotkeysConfig,
     pub overlay: OverlayConfig,
+    pub appearance: AppearanceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +79,21 @@ pub struct OverlayConfig {
 impl Default for OverlayConfig {
     fn default() -> Self {
         Self { enabled: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct AppearanceConfig {
+    /// "glance" or "system".
+    pub accent: String,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            accent: "glance".into(),
+        }
     }
 }
 
@@ -317,6 +336,12 @@ impl Config {
             glance_orchestrator::Personality::parse("custom", &config.models.personality_custom)
                 .map_err(|e| anyhow::anyhow!("models.{e}"))?;
         }
+        if !["glance", "system"].contains(&config.appearance.accent.as_str()) {
+            bail!(
+                "appearance.accent must be glance or system, got \"{}\"",
+                config.appearance.accent
+            );
+        }
         if !["off", "low", "medium", "xhigh"].contains(&config.models.deep_effort.as_str()) {
             bail!(
                 "models.deep_effort must be off, low, medium or xhigh, got \"{}\"",
@@ -415,5 +440,12 @@ mod tests {
         assert!(Config::parse("[models]\npersonality = \"robot\"\n").is_err());
         let long = format!("[models]\npersonality_custom = \"{}\"\n", "a".repeat(301));
         assert!(Config::parse(&long).is_err());
+    }
+
+    #[test]
+    fn accent_is_checked() {
+        assert_eq!(Config::parse("").unwrap().appearance.accent, "glance");
+        assert!(Config::parse("[appearance]\naccent = \"system\"\n").is_ok());
+        assert!(Config::parse("[appearance]\naccent = \"teal\"\n").is_err());
     }
 }

@@ -17,6 +17,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
 dispatch2.workspace = true
 global-hotkey.workspace = true
 objc2.workspace = true

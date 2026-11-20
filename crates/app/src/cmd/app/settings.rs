@@ -72,6 +72,7 @@ impl SettingsBackend for AppSettings {
                 config.hotkeys.look.clone(),
                 config.hotkeys.think.clone(),
             ],
+            accent: config.appearance.accent.clone(),
         };
         (values, choices())
     }
@@ -171,6 +172,10 @@ impl SettingsBackend for AppSettings {
                     controller.set_deep_idle(Duration::from_secs(idle_mins * 60));
                     Ok(Applied::Live)
                 })
+            }
+            SettingsChange::Accent(accent) => {
+                self.save(&[("appearance", "accent", str_value(&accent))])?;
+                Ok(Applied::Live)
             }
             SettingsChange::Hotkeys([talk, look, think]) => {
                 // The window registered them already.
