@@ -258,6 +258,11 @@ pub fn row(
 ) -> Retained<NSView> {
     let text = stack(mtm, &[], true, 2.0);
     let t = label(mtm, title_text);
+    // Titles take the room they need, up to the control.
+    t.setContentCompressionResistancePriority_forOrientation(
+        500.0,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     text.addArrangedSubview(&t);
     if let Some(detail) = detail {
         text.addArrangedSubview(&secondary(mtm, detail, TEXT_W));
@@ -265,13 +270,18 @@ pub fn row(
     if restart {
         text.addArrangedSubview(&restart_note(mtm));
     }
+    row_with(mtm, &text, control)
+}
+
+/// A row from any text column and control: text left, control right.
+pub fn row_with(mtm: MainThreadMarker, text: &NSView, control: &NSView) -> Retained<NSView> {
     let row = NSStackView::new(mtm);
     row.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
     row.setAlignment(NSLayoutAttribute::CenterY);
     row.setDistribution(NSStackViewDistribution::GravityAreas);
     row.setSpacing(16.0);
     auto(&row);
-    row.addView_inGravity(&text, NSStackViewGravity::Leading);
+    row.addView_inGravity(text, NSStackViewGravity::Leading);
     row.addView_inGravity(control, NSStackViewGravity::Trailing);
     text.setContentHuggingPriority_forOrientation(1.0, NSLayoutConstraintOrientation::Horizontal);
     text.setContentCompressionResistancePriority_forOrientation(

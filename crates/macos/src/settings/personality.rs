@@ -36,7 +36,11 @@ impl Personality {
         let mtm = ui.mtm;
         let page = Page::new(mtm);
         let preset = ui.popup(&PRESETS.map(|(_, l)| l.to_owned()), PRESET);
-        let custom = ui.text_field("e.g. Calm and patient, like a good teacher", CUSTOM, ui::CONTROL_W);
+        let custom = ui.text_field(
+            "e.g. Calm and patient, like a good teacher",
+            CUSTOM,
+            ui::CONTROL_W,
+        );
         page.group(
             mtm,
             "Style",

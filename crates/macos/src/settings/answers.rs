@@ -33,7 +33,9 @@ impl Answers {
         let length_label = ui.value_label(56.0);
         let control: Retained<NSView> =
             Retained::into_super(ui::stack(mtm, &[&length, &length_label], false, 8.0));
-        ui::activate(&[control.widthAnchor().constraintEqualToConstant(ui::CONTROL_W)]);
+        ui::activate(&[control
+            .widthAnchor()
+            .constraintEqualToConstant(ui::CONTROL_W)]);
         page.group(
             mtm,
             "Length",
@@ -83,7 +85,10 @@ impl Section for Answers {
     }
 
     fn fill(&mut self, values: &SettingsValues, _choices: &SettingsChoices) {
-        let at = LENGTHS.iter().position(|l| *l == values.length).unwrap_or(1);
+        let at = LENGTHS
+            .iter()
+            .position(|l| *l == values.length)
+            .unwrap_or(1);
         self.length.setDoubleValue(at as f64);
         self.show_length();
     }
@@ -97,7 +102,9 @@ impl Section for Answers {
     }
 
     fn restore(&mut self, d: &SettingsValues, backend: &dyn SettingsBackend) -> Option<Reply> {
-        Some(Reply::Applied(backend.apply(SettingsChange::Length(d.length))))
+        Some(Reply::Applied(
+            backend.apply(SettingsChange::Length(d.length)),
+        ))
     }
 
     fn restore_note(&self) -> &'static str {

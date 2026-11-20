@@ -16,6 +16,7 @@
 
 mod about;
 mod answers;
+mod models;
 mod personality;
 mod think;
 mod ui;
@@ -109,6 +110,7 @@ fn sections(ui: &Ui<'_>) -> Vec<Box<dyn Section>> {
     list.push(Box::new(answers::Answers::new(&page(list.len()))));
     list.push(Box::new(personality::Personality::new(&page(list.len()))));
     list.push(Box::new(think::Think::new(&page(list.len()))));
+    list.push(Box::new(models::Models::new(&page(list.len()))));
     list.push(Box::new(about::About::new(&page(list.len()))));
     list
 }

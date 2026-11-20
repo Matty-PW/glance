@@ -4,7 +4,9 @@ use glance_orchestrator::settings::{
     SettingsBackend, SettingsChange, SettingsChoices, SettingsValues,
 };
 use objc2::rc::Retained;
-use objc2_app_kit::{NSControlStateValueOn, NSPopUpButton, NSSlider, NSSwitch, NSTextField, NSView};
+use objc2_app_kit::{
+    NSControlStateValueOn, NSPopUpButton, NSSlider, NSSwitch, NSTextField, NSView,
+};
 use objc2_foundation::NSString;
 
 use super::ui::{self, Page, Ui};
@@ -38,13 +40,11 @@ impl Voice {
         let voice = ui.popup(&[], VOICE);
         let speed = ui.slider(0.5, 2.0, None, SPEED);
         let speed_label = ui.value_label(56.0);
-        let speed_box: Retained<NSView> = Retained::into_super(ui::stack(
-            mtm,
-            &[&speed, &speed_label],
-            false,
-            8.0,
-        ));
-        ui::activate(&[speed_box.widthAnchor().constraintEqualToConstant(ui::CONTROL_W)]);
+        let speed_box: Retained<NSView> =
+            Retained::into_super(ui::stack(mtm, &[&speed, &speed_label], false, 8.0));
+        ui::activate(&[speed_box
+            .widthAnchor()
+            .constraintEqualToConstant(ui::CONTROL_W)]);
         let maths = ui.switch(MATHS);
         page.group(
             mtm,
@@ -58,13 +58,7 @@ impl Voice {
                     &engine,
                 ),
                 ui::row(mtm, "Voice", None, false, &voice),
-                ui::row(
-                    mtm,
-                    "Speed",
-                    Some("Kokoro only."),
-                    false,
-                    &speed_box,
-                ),
+                ui::row(mtm, "Speed", Some("Kokoro only."), false, &speed_box),
             ],
         );
         page.group(
@@ -107,7 +101,12 @@ impl Voice {
             ui::select(&self.voice, &items, &self.kokoro_voice);
         } else {
             let mut titles = vec!["System default".to_owned()];
-            titles.extend(self.choices.system_voices.iter().map(|(_, label)| label.clone()));
+            titles.extend(
+                self.choices
+                    .system_voices
+                    .iter()
+                    .map(|(_, label)| label.clone()),
+            );
             ui::set_items(&self.voice, &titles);
             let at = self.system_voice.as_ref().and_then(|wanted| {
                 self.choices
