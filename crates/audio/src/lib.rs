@@ -14,7 +14,7 @@ mod resample;
 use std::fmt;
 use std::time::Duration;
 
-pub use mic::Microphone;
+pub use mic::{LevelMeter, Microphone};
 pub use output::{AudioOutput, PlaybackEvent, PlaybackListener, Speaker};
 pub use resample::resample;
 

@@ -13,7 +13,7 @@ mod tiers;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
-use glance_audio::Microphone;
+use glance_audio::{LevelMeter, Microphone};
 use glance_llm_client::{Endpoint, OpenAiClient};
 use glance_macos::capture::LiveScreen;
 use glance_macos::hotkeys::Chords;
@@ -145,6 +145,13 @@ pub fn run(args: Args) -> Result<()> {
         overlay: config_file.overlay.enabled,
         settings: Some(settings::backend()),
         models: Some(models_backend),
+        mic_level: Some(Box::new(|| {
+            if DEMO_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+                demo_level()
+            } else {
+                MIC_LEVEL.get_or_init(LevelMeter::default).get()
+            }
+        })),
     };
     let handle = runtime.handle().clone();
     glance_macos::shell::run(options, move |key_events, shell| {
@@ -272,7 +279,10 @@ async fn start(
     };
     let parts = Parts {
         capture: Arc::new(LiveScreen::new(capture_edge.max(args.max_edge))),
-        mic: Box::new(Microphone::new(60)),
+        mic: Box::new(
+            Microphone::new(60)
+                .with_level_meter(MIC_LEVEL.get_or_init(LevelMeter::default).clone()),
+        ),
         stt: Box::new(stt),
         chat: Arc::new(fast.client),
         deep,
@@ -300,6 +310,21 @@ async fn start(
     shell.update(&Update::State(TurnState::Idle));
     eprintln!("glance: ready");
     orchestrator.run(key_events).await;
+}
+
+/// The microphone's level, shared by the microphone and the overlay.
+static MIC_LEVEL: OnceLock<LevelMeter> = OnceLock::new();
+/// `--overlay-demo` is playing: the overlay shows a made-up level.
+static DEMO_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A speech-like level for the demo: syllables of varying loudness.
+fn demo_level() -> f32 {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f32() % 1000.0);
+    let syllables = (t * 7.0).sin().abs();
+    let phrase = 0.5 + 0.5 * (t * 1.3).sin();
+    0.02 + 0.12 * syllables * phrase
 }
 
 /// Set once the pipeline is running; the tray's "New session" uses it.

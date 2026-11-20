@@ -37,6 +37,9 @@ pub struct Options {
     pub settings: Option<Arc<dyn SettingsBackend>>,
     /// Lists, downloads, checks and deletes models for the models window.
     pub models: Option<Arc<dyn ModelsBackend>>,
+    /// The microphone level (0.0 to about 1.0) for the overlay's Listening
+    /// waveform. A single number, read only while listening.
+    pub mic_level: Option<Box<dyn Fn() -> f32 + Send + Sync>>,
 }
 
 struct Actions {
@@ -47,6 +50,13 @@ struct Actions {
 static ACTIONS: OnceLock<Actions> = OnceLock::new();
 static SETTINGS: OnceLock<Arc<dyn SettingsBackend>> = OnceLock::new();
 static MODELS: OnceLock<Arc<dyn ModelsBackend>> = OnceLock::new();
+type LevelSource = Box<dyn Fn() -> f32 + Send + Sync>;
+static MIC_LEVEL: OnceLock<LevelSource> = OnceLock::new();
+
+/// The microphone level now (0 without a source).
+pub(crate) fn mic_level() -> f32 {
+    MIC_LEVEL.get().map_or(0.0, |level| level())
+}
 
 /// The app's models backend, if it gave one.
 pub(crate) fn models_backend() -> Option<Arc<dyn ModelsBackend>> {
@@ -124,6 +134,9 @@ pub fn run(
     if let Some(settings) = options.settings {
         crate::theme::set_system_accent(settings.current().0.accent == "system");
         let _ = SETTINGS.set(settings);
+    }
+    if let Some(level) = options.mic_level {
+        let _ = MIC_LEVEL.set(level);
     }
     if let Some(models) = options.models {
         let _ = MODELS.set(models);
