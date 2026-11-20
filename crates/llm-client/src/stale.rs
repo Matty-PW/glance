@@ -202,14 +202,15 @@ mod tests {
     }
 
     fn dir() -> PathBuf {
+        // A counter, not the clock: tests run in parallel and the macOS
+        // clock only has microsecond resolution, so two could share a dir.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let d = std::env::temp_dir().join(format!(
-            "glance-stale-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            "glance-stale-test-{}-{n}",
+            std::process::id()
         ));
+        let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
     }
