@@ -53,6 +53,11 @@ thread_local! {
     static ACTIVE: RefCell<Active> = const { RefCell::new(None) };
 }
 
+/// Whether the chords are registered (main thread).
+pub fn is_active() -> bool {
+    ACTIVE.with_borrow(Option::is_some)
+}
+
 /// The registered chords' labels (the defaults until registration).
 pub fn labels() -> Labels {
     LABELS

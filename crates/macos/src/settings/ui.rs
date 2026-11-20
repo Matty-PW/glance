@@ -292,6 +292,11 @@ pub fn row_with(mtm: MainThreadMarker, text: &NSView, control: &NSView) -> Retai
         751.0,
         NSLayoutConstraintOrientation::Horizontal,
     );
+    // A stack as the control (keycaps, buttons) is only as wide as what it
+    // shows, so it sits against the right edge.
+    if let Some(s) = control.downcast_ref::<NSStackView>() {
+        s.setHuggingPriority_forOrientation(751.0, NSLayoutConstraintOrientation::Horizontal);
+    }
     Retained::into_super(row)
 }
 
