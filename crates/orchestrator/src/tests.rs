@@ -602,6 +602,14 @@ async fn a_press_while_speaking_cancels_and_listens_again() {
     assert_eq!(report.outcome, Outcome::Cancelled);
     assert_eq!(report.turn, 1);
     assert!(h.tts.stops.load(Ordering::SeqCst) >= 1);
+    // The microphone opens on its worker thread just after Listening is
+    // announced, so give it a moment under load.
+    for _ in 0..100 {
+        if h.mic.starts.load(Ordering::SeqCst) == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!(h.mic.starts.load(Ordering::SeqCst), 2);
 
     // The new turn runs normally; the cancelled one's leftovers are ignored.
