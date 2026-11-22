@@ -18,7 +18,8 @@ fi
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 
 # 1. File types that must never be committed, even when force-added past .gitignore.
-blocked=$(printf '%s\n' "$staged" | grep -iE \
+#    PNGs are allowed only in docs/images/ (README images, see its README.md).
+blocked=$(printf '%s\n' "$staged" | grep -v '^docs/images/[^/]*\.png$' | grep -iE \
   '\.(gguf|onnx|onnx\.data|safetensors|pt|pth|bin|pkl|ckpt|npz|wav|flac|mp3|png|p12|pem|key|cer|mobileprovision)$|(^|/)\.env' \
   || true)
 if [ -n "$blocked" ]; then

@@ -27,9 +27,10 @@ models/
 screenshots/
 debug-dump*/
 eval-local/
-# PNGs are ignored everywhere. When the app icon lands (M2), allow that one
-# directory explicitly instead of loosening this rule.
+# PNGs are ignored everywhere except the README images folder (logo, demo,
+# UI shots; see docs/images/README.md).
 *.png
+!docs/images/*.png
 
 # Secrets and signing material
 .env*
@@ -42,6 +43,9 @@ eval-local/
 # App bundles produced by `cargo xtask bundle`
 *.app/
 *.dmg
+
+# Logs (glance logs to stderr; anything saved from it stays local)
+*.log
 
 # OS / editor noise
 .DS_Store
