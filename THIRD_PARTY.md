@@ -5,6 +5,66 @@ denied). This file records the cases where a licence check alone does not tell
 the whole story, so they are reviewed before glance is ever distributed as a
 binary. Model licences are recorded per model in `models.toml`.
 
+## Models
+
+glance does not include or redistribute any model weights. The repository
+holds only [`models.toml`](models.toml): for each model, the Hugging Face
+repository, a pinned commit, and the size and SHA-256 of every file. Weights
+are downloaded by the user, from that manifest only, into
+`~/Library/Application Support/glance/models/`, and checked against their
+pins before use. Each model stays under its own licence:
+
+| glance id | Original model | Downloaded from | Licence |
+|---|---|---|---|
+| `qwen3-vl-4b-instruct-q4km` | Qwen3-VL-4B-Instruct (Qwen) | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | Apache-2.0 |
+| `qwen3-vl-8b-instruct-q4km` | Qwen3-VL-8B-Instruct (Qwen) | `Qwen/Qwen3-VL-8B-Instruct-GGUF` | Apache-2.0 |
+| `qwen3.8-27b-q4km` | Qwen3.8-27B (Qwen) | `bartowski/Qwen3.8-27B-GGUF` (community GGUF conversion) | Apache-2.0 |
+| `lfm2.5-vl-3b-q4km` | LFM2.5-VL-3B (Liquid AI) | `LiquidAI/LFM2.5-VL-3B-GGUF` | LFM Open License v1.0 (below) |
+| `parakeet-tdt-0.6b-v3-int8` | parakeet-tdt-0.6b-v3 (NVIDIA) | `istupakov/parakeet-tdt-0.6b-v3-onnx` (int8 ONNX conversion) | CC-BY-4.0 (below) |
+| `parakeet-tdt-0.6b-v2-int8` | parakeet-tdt-0.6b-v2 (NVIDIA) | `istupakov/parakeet-tdt-0.6b-v2-onnx` (int8 ONNX conversion) | CC-BY-4.0 (below) |
+| `kokoro-82m-v1.0-*` (model, voices) | Kokoro-82M v1.0 (hexgrad) | `onnx-community/Kokoro-82M-v1.0-ONNX` | Apache-2.0 |
+
+### Parakeet (CC-BY-4.0 attribution)
+
+Speech recognition uses **parakeet-tdt-0.6b-v3** (and optionally v2) by
+**NVIDIA**, licensed under the
+[Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/).
+glance uses the int8 ONNX conversion published by `istupakov` on Hugging
+Face; glance itself does not modify the model, and the user downloads it
+from the pinned manifest. The original models are published by NVIDIA as
+`nvidia/parakeet-tdt-0.6b-v3` and `nvidia/parakeet-tdt-0.6b-v2`.
+
+### LFM Open License v1.0 (optional LFM2.5-VL-3B model)
+
+Read at the pinned revision (`LiquidAI/LFM2.5-VL-3B-GGUF`,
+`6f730e9a2c454e8af9adc29db58e638e01e5957f`, file `LICENSE`). In plain
+words:
+
+- You may use, copy, modify and share the model free of charge.
+- If you share it (or a changed version), include a copy of the licence,
+  mark the files you changed, and keep the original notices.
+- **Commercial use is licensed only while you and the companies you
+  control, are controlled by, or share control with have under
+  USD 10 million in annual revenue.** Above that, commercial use is not
+  covered. (The licence says "not exceeding" in one place and "10 million
+  or more" in another, so exactly USD 10 million is ambiguous.) Qualified
+  non-profits are exempt for non-commercial or research use.
+- Suing anyone over patents in the model ends your licence, and so does
+  breaking its terms (you must then stop using it and delete your copies).
+- No trademark rights; no warranty.
+
+The model is optional and not a default; glance only downloads it when the
+user asks.
+
+## Dependency licences beyond MIT and Apache-2.0
+
+`cargo deny` allows only permissive licences (see `deny.toml`). Besides MIT
+and Apache-2.0, the dependency tree contains BSD-2-Clause, BSD-3-Clause, ISC,
+Zlib, Unicode-3.0, and crates offered under a choice that includes MIT or
+Apache-2.0 (0BSD, MIT-0, CC0-1.0, Unlicense). Two exceptions are listed in
+`deny.toml` by name: `webpki-root-certs` (CDLA-Permissive-2.0, Mozilla's root
+certificate bundle) and `language-tokenizer@0.1.0` (WTFPL, below).
+
 ## misaki-rs 0.9.0 (phonemizer for Kokoro)
 
 - Crate licence: MIT (`Cargo.toml`: `license = "MIT"`; `LICENSE`: "MIT
