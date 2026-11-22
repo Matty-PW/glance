@@ -39,7 +39,7 @@ impl About {
                 ui::row(
                     mtm,
                     "glance licence",
-                    Some("Not chosen yet."),
+                    Some("MIT OR Apache-2.0, at your option."),
                     false,
                     &ui.button("Licences…", SHOW_NOTICES, false),
                 ),

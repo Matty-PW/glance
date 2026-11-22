@@ -221,7 +221,6 @@ glance is early software, built and tested by one developer on one Mac.
   are untested.
 - **No remote models yet.** Only local servers; remote endpoints with keys
   in the macOS Keychain are a later milestone.
-- **Licence not chosen yet** (see [Licence](#licence)).
 
 ## Contributing
 
@@ -232,5 +231,13 @@ dependency rules. Please report security issues privately, as described in
 
 ## Licence
 
-TODO: not chosen yet. Until a licence is added, no rights to reuse this code
-are granted. Dependency and model licences: [THIRD_PARTY.md](THIRD_PARTY.md).
+glance is licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT licence](LICENSE-MIT)
+
+at your option. Unless you state otherwise, any contribution you submit for
+inclusion in glance is dual-licensed as above, without any additional terms
+or conditions.
+
+Dependency and model licences, and third-party notes: [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -137,6 +137,12 @@ still never sees it.
 - TODO (maintainer): confirm with a test recording that the overlay shows
   up in QuickTime and OBS.
 
+## Licence of contributions
+
+glance is dual-licensed under MIT OR Apache-2.0. Unless you state otherwise,
+any contribution you submit for inclusion is dual-licensed the same way,
+without any additional terms or conditions.
+
 ## Pull requests
 
 Fill in the pull request template: what changed, why, how you tested it,
