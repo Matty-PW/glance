@@ -90,6 +90,10 @@ certificate bundle) and `language-tokenizer@0.1.0` (WTFPL, below).
   tagger (per the crate's `src/spacy_tagger.rs`), MIT according to that
   model's card. Raw little-endian f32, compiled in with `include_bytes!` and
   read positionally; no deserializer.
+- **Decision (maintainer, 2026-11-22): keep misaki-rs with this note; the
+  repository is source only and no binaries are distributed.** This must be
+  resolved before any binary is released, most likely by switching to
+  CMUdict (below). The README says so.
 - Decision (maintainer, 2026-11-17): use misaki-rs for local builds. If
   glance is distributed as a binary and the data licence is a problem, swap
   the phonemizer: it sits behind the `Phonemizer` trait in `crates/tts`, and

@@ -212,7 +212,12 @@ glance is early software, built and tested by one developer on one Mac.
 
 - **macOS only, Apple Silicon only.** Windows is planned (the platform code
   already sits behind traits); there is no Windows code yet.
-- **Build from source.** There are no signed or notarised releases.
+- **Source only: no binaries are distributed.** You build glance yourself.
+  Before any binary is released, one licensing question must be resolved:
+  the pronunciation dictionaries compiled into glance (from the misaki-rs
+  phonemizer) have no licence statement of their own and were partly
+  produced with GPL-licensed eSpeak NG. The likely fix is switching to the
+  CMUdict dictionary; details in [THIRD_PARTY.md](THIRD_PARTY.md).
 - **Not yet accepted end to end.** All planned features (milestones M0 to M5,
   see [docs/PROGRESS.md](docs/PROGRESS.md)) are built and tested with mocks,
   benchmarks and in-process UI snapshots. The hands-on runs through the app
@@ -241,3 +246,5 @@ inclusion in glance is dual-licensed as above, without any additional terms
 or conditions.
 
 Dependency and model licences, and third-party notes: [THIRD_PARTY.md](THIRD_PARTY.md).
+No binaries are distributed; see the dictionary-data note under
+[Status and limitations](#status-and-limitations) before publishing any.
