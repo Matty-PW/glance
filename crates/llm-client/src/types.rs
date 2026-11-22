@@ -172,16 +172,55 @@ pub enum ChatEvent {
     Done(ChatSummary),
 }
 
+/// A failed chat request. No variant keeps raw text from the server: an
+/// error body or a malformed stream line could echo the prompt (the user's
+/// question, or text read off the screen), and errors end up in logs. Only
+/// status codes and fixed messages are kept.
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
     #[error("could not reach the model endpoint: {0}")]
     Connect(#[source] reqwest::Error),
-    #[error("model endpoint returned HTTP {status}: {body}")]
-    Status { status: u16, body: String },
+    /// A non-2xx reply: the status, and which known server error it was
+    /// (from a fixed list), never the body itself.
+    #[error("model endpoint returned HTTP {status}{}", known.map(|k| format!(": {k}")).unwrap_or_default())]
+    Status {
+        status: u16,
+        known: Option<&'static str>,
+    },
     #[error("stream from the model endpoint broke: {0}")]
     Stream(#[source] reqwest::Error),
     #[error("model endpoint sent something that is not a chat stream: {0}")]
-    Protocol(String),
+    Protocol(&'static str),
+}
+
+/// llama-server error messages glance recognises, as (text to look for,
+/// fixed message to keep). Anything else is reported by status alone.
+const KNOWN_ERRORS: [(&str, &str); 5] = [
+    (
+        "exceeds the available context size",
+        "the request does not fit the model's context size",
+    ),
+    ("loading model", "the model is still loading"),
+    ("invalid api key", "the API key was refused"),
+    (
+        "image input is not supported",
+        "this model does not accept images",
+    ),
+    (
+        "no slot available",
+        "the server is busy with another request",
+    ),
+];
+
+/// The error for a non-2xx reply with this body. The body is only matched
+/// against [`KNOWN_ERRORS`] and then dropped.
+pub fn status_error(status: u16, body: &str) -> ChatError {
+    let lower = body.to_lowercase();
+    let known = KNOWN_ERRORS
+        .iter()
+        .find(|(needle, _)| lower.contains(needle))
+        .map(|(_, message)| *message);
+    ChatError::Status { status, known }
 }
 
 /// A streamed reply. Dropping it cancels generation on the server.

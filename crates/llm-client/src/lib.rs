@@ -22,7 +22,8 @@ use std::pin::Pin;
 pub use client::OpenAiClient;
 pub use endpoint::{ApiKey, Endpoint, EndpointError};
 pub use types::{
-    ChatError, ChatEvent, ChatRequest, ChatStream, ChatSummary, Message, Part, Role, Timings, Usage,
+    ChatError, ChatEvent, ChatRequest, ChatStream, ChatSummary, Message, Part, Role, Timings,
+    Usage, status_error,
 };
 
 /// A chat model that streams its reply. Implemented by [`OpenAiClient`] and by

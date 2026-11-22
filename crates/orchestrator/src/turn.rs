@@ -358,7 +358,7 @@ async fn run_to_end(chat: &dyn ChatModel, request: ChatRequest) -> Result<ChatSu
             return Ok(summary);
         }
     }
-    Err(ChatError::Protocol("stream ended without a summary".into()))
+    Err(ChatError::Protocol("stream ended without a summary"))
 }
 
 /// Handed from the state machine to the task at key-up.

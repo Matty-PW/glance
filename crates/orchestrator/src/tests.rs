@@ -183,7 +183,7 @@ impl ChatModel for MockChat {
             if fail {
                 return Err(ChatError::Status {
                     status: 503,
-                    body: "unavailable".into(),
+                    known: None,
                 });
             }
             let (tx, rx) = mpsc::channel(16);

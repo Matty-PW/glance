@@ -50,18 +50,9 @@ impl OpenAiClient {
 
         let status = response.status();
         if !status.is_success() {
-            let mut body = response.text().await.unwrap_or_default();
-            if body.len() > 500 {
-                let cut = (0..=500)
-                    .rev()
-                    .find(|&i| body.is_char_boundary(i))
-                    .unwrap_or(0);
-                body.truncate(cut);
-            }
-            return Err(ChatError::Status {
-                status: status.as_u16(),
-                body,
-            });
+            // Read only to recognise a known error; the text is not kept.
+            let body = response.text().await.unwrap_or_default();
+            return Err(crate::types::status_error(status.as_u16(), &body));
         }
 
         let (tx, rx) = mpsc::channel(64);
@@ -97,9 +88,7 @@ async fn pump(mut response: reqwest::Response, tx: mpsc::Sender<Result<ChatEvent
         let payloads = match parser.push(&bytes) {
             Ok(p) => p,
             Err(_) => {
-                let _ = tx
-                    .send(Err(ChatError::Protocol("unterminated line".into())))
-                    .await;
+                let _ = tx.send(Err(ChatError::Protocol("unterminated line"))).await;
                 return;
             }
         };
@@ -132,8 +121,16 @@ pub(crate) fn absorb(
     payload: &str,
     summary: &mut ChatSummary,
 ) -> Result<Vec<ChatEvent>, ChatError> {
-    let chunk: Chunk = serde_json::from_str(payload)
-        .map_err(|e| ChatError::Protocol(format!("bad chunk: {e}")))?;
+    // serde's message can quote the value it rejected (model output), so
+    // only its category is kept.
+    let chunk: Chunk = serde_json::from_str(payload).map_err(|e| {
+        ChatError::Protocol(match e.classify() {
+            serde_json::error::Category::Syntax => "a chunk is not valid JSON",
+            serde_json::error::Category::Data => "a chunk has an unexpected shape",
+            serde_json::error::Category::Eof => "a chunk was cut short",
+            serde_json::error::Category::Io => "a chunk could not be read",
+        })
+    })?;
     if let Some(timings) = chunk.timings {
         summary.timings = Some(timings);
     }
@@ -199,6 +196,35 @@ mod tests {
         assert_eq!(timings.cache_n, Some(880));
         assert_eq!(timings.prompt_n, Some(20));
         assert_eq!(summary.usage.unwrap().cached_tokens, Some(880));
+    }
+
+    #[test]
+    fn status_errors_never_keep_the_body() {
+        let body = "{\"error\": \"bad request: what does SECRET-PROMPT mean on screen?\"}";
+        let err = crate::types::status_error(400, body);
+        let text = err.to_string();
+        assert_eq!(text, "model endpoint returned HTTP 400");
+        assert!(!format!("{err:?}").contains("SECRET"), "{err:?}");
+        let loading = crate::types::status_error(503, r#"{"error":{"message":"Loading model"}}"#);
+        assert_eq!(
+            loading.to_string(),
+            "model endpoint returned HTTP 503: the model is still loading"
+        );
+    }
+
+    #[test]
+    fn stream_errors_never_quote_the_stream() {
+        let mut summary = ChatSummary::default();
+        // A chunk with the wrong shape: serde would name the string it saw.
+        let bad = r#"{"choices": "SECRET answer about Priyanka's invoice"}"#;
+        let err = absorb(bad, &mut summary).unwrap_err().to_string();
+        for word in ["SECRET", "Priyanka", "invoice"] {
+            assert!(!err.contains(word), "{err}");
+        }
+        let err = absorb(r#"{"choices": [{"delta": {"content": 42}}]}"#, &mut summary)
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains("42"), "{err}");
     }
 
     #[test]

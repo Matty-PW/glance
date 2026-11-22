@@ -115,11 +115,18 @@ impl From<CaptureError> for TurnError {
 
 impl From<ChatError> for TurnError {
     fn from(e: ChatError) -> Self {
-        // Error bodies and protocol fragments are not logged: they could echo
-        // text from the prompt.
+        // ChatError keeps no server text (only status codes and fixed
+        // messages), so nothing here can echo the prompt.
         TurnError::Chat(match e {
             ChatError::Connect(e) => format!("could not reach the endpoint ({e})"),
-            ChatError::Status { status, .. } => format!("HTTP {status}"),
+            ChatError::Status {
+                status,
+                known: None,
+            } => format!("HTTP {status}"),
+            ChatError::Status {
+                status,
+                known: Some(known),
+            } => format!("HTTP {status}: {known}"),
             ChatError::Stream(_) => "the stream broke".into(),
             ChatError::Protocol(_) => "the endpoint sent an invalid stream".into(),
         })
@@ -329,10 +336,26 @@ mod tests {
 
     #[test]
     fn chat_error_bodies_are_not_kept() {
-        let e = TurnError::from(ChatError::Status {
-            status: 400,
-            body: "echo of the user's words".into(),
-        });
+        let e = TurnError::from(glance_llm_client::status_error(
+            400,
+            "echo of the user's words: what is Priyanka's salary?",
+        ));
         assert_eq!(e, TurnError::Chat("HTTP 400".into()));
+        assert_eq!(
+            e.to_string(),
+            "model request failed: HTTP 400",
+            "the logged line"
+        );
+    }
+
+    #[test]
+    fn known_server_errors_keep_only_a_fixed_message() {
+        let body = r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":9001}}"#;
+        let e = TurnError::from(glance_llm_client::status_error(400, body));
+        assert_eq!(
+            e,
+            TurnError::Chat("HTTP 400: the request does not fit the model's context size".into())
+        );
+        assert!(!e.to_string().contains("9001"));
     }
 }
