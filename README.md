@@ -62,7 +62,7 @@ you choose models in Settings):
 **1. Download the models** (each file is checked against its pinned SHA-256)
 
 ```sh
-git clone <TODO: repository URL> glance && cd glance
+git clone https://github.com/Matty-PW/glance && cd glance
 alias glance='cargo run --release -q -p glance --'
 
 glance models pull qwen3-vl-4b-instruct-q4km    # vision model, 3.3 GB
