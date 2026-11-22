@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in glance doesn't work as expected.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Security problems:** please don't file them here; use the private report described in SECURITY.md.
+
+        **Privacy:** don't attach screenshots or recordings of real screen content, and don't paste what you asked or what glance answered unless you're happy for it to be public.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start glance with …
+        2. Hold Ctrl+Opt+G and ask about …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "e.g. 15.2"
+    validations:
+      required: true
+  - type: input
+    id: chip
+    attributes:
+      label: Mac chip
+      placeholder: "e.g. M2, M4 Pro"
+    validations:
+      required: true
+  - type: dropdown
+    id: ram
+    attributes:
+      label: Memory (RAM)
+      options: ["8 GB", "16 GB", "18 GB", "24 GB", "32 GB", "36 GB", "48 GB", "64 GB or more", "Other"]
+    validations:
+      required: true
+  - type: textarea
+    id: models
+    attributes:
+      label: Models and settings
+      description: "FAST and DEEP model ids, voice engine (Kokoro or system), and any non-default settings. `glance models list` shows what is installed."
+      placeholder: |
+        FAST: qwen3-vl-4b-instruct-q4km
+        DEEP: none
+        Voice: kokoro, af_heart
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: glance commit
+      description: "`git rev-parse --short HEAD`"
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: |
+        Run `open -W --stderr "$(tty)" target/bundle/Glance.app --args app` and paste the relevant lines.
+        glance's logs are designed to hold only timings, counts and status codes, never transcripts, answers or text from your screen. Two known gaps (see SECURITY.md): an error can name one word of an answer, or quote a model server error. **Please read the log before pasting and remove anything personal**, including file paths that show your username.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This report contains no private screen content, questions or answers I don't want public.
+          required: true
