@@ -1,6 +1,6 @@
 # glance — progress
 
-Snapshot as of 2026-11-17; the design is in `docs/DESIGN.md`. Numbers are from
+Snapshot as of 2026-11-22; the design is in `docs/DESIGN.md`. Numbers are from
 the Apple Silicon reference machine, with synthetic inputs unless noted.
 
 ## Milestone status
@@ -10,12 +10,38 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | Step 1: design (`docs/DESIGN.md`) | Done, approved |
 | Step 2: skeleton, hooks, CI, `deny.toml` | Done. CI has not been observed running on GitHub yet |
 | M0: CLI spike (record, transcribe, ask, print, time) | Done, except a spoken run with a real voice (needs the maintainer) |
-| M1: TTS with sentence streaming | Done on the macOS system voice |
+| M1: TTS with sentence streaming | Done (Kokoro default, macOS voice as an option) |
 | Kokoro voice (resumed after M3) | **Code done; Kokoro is the default voice.** Licence decision and listening test left (see below) |
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
-| M4: escalation, managed llama-server pair, DEEP bake-off | **In progress.** Escalation and managed servers done; DEEP model not chosen or downloaded, so no bake-off yet |
-| M5: overlay, settings, model management | **In progress.** Platform split, overlay, settings, models panel and visual redesign done; hands-on checks next |
+| M4: escalation, managed llama-server pair, DEEP bake-off | **Code done.** DEEP chosen (Qwen3.8-27B, pinned) and measured; FAST-only default, think harder on demand |
+| M5: overlay, settings, model management | **Code done.** Overlay, settings window, models page, personality, visual redesign; hands-on checks next |
+| Public release preparation | **Prepared, not public.** Audit, README, SECURITY, CONTRIBUTING, templates done; decisions with the maintainer (see below) |
+
+## Public release preparation (2026-11-22)
+
+Prepared only: the repository's visibility, history and licence are the
+maintainer's decisions.
+- Audit (full report in the gitignored `eval-local/public-audit.md`):
+  gitleaks over all history clean; no home paths, tokens or keys; no binary
+  or large files ever committed (largest blob `Cargo.lock`, 83 KB; repo
+  about 0.6 MB packed). Commit author email kept as is (maintainer,
+  2026-11-22: accepted).
+- RUSTSEC-2026-0592 (`url`, published 2026-11-20) made `cargo audit` and
+  `cargo deny` fail: fixed by `url` 2.5.9 (lockfile only).
+- CI reviewed: one action pinned to a full SHA, read-only token, no
+  `pull_request_target`, no secrets or deploy steps; fmt, clippy, tests,
+  audit, deny and gitleaks all run. No change needed.
+- Logs: per-turn lines hold codes and timings only. Two gaps found and
+  documented in SECURITY.md, not fixed yet: a Kokoro phonemizer error can
+  name a word of an answer (`no phonemes matched for '<word>'`), and a
+  failed model request logs up to 500 characters of the server's error body.
+- New files: README rewrite, SECURITY.md, CONTRIBUTING.md, issue and pull
+  request templates, `docs/images/` (PNGs allowed only there), `*.log`
+  ignored. THIRD_PARTY.md now lists every model and licence, the Parakeet
+  CC-BY-4.0 attribution and the LFM Open License terms in plain words.
+- Waiting on the maintainer: the licence (MIT, Apache-2.0 or both), the
+  misaki dictionary-data question, and the checklist in the audit report.
 
 ## Kokoro milestone (resumed 2026-11-17)
 
@@ -486,7 +512,11 @@ cargo deny check                             # passes; one ignore, one exception
 ```
 Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
-## Next step: M2 and M3 acceptance (needs the maintainer), then M4
+## Next step: hands-on acceptance (needs the maintainer)
+
+The M2/M3 steps below, plus the M5 windows (overlay states over light and
+dark apps, Reduce Motion and Reduce Transparency, settings changes, think
+harder), then the public-release decisions above.
 
 Built: the orchestrator turn loop and sessions (`crates/orchestrator`),
 `glance app` (`crates/app/src/cmd/app/`), permission helpers, `cargo xtask
