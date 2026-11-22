@@ -11,7 +11,7 @@ Yes, there's a clear failure indicated by the word FAILED in red text.
 It shows one test failed out of twelve, specifically the refuses wrong hash test.
 Eleven tests passed and one failed.
 You are connected to Harbor-5G.
-Your IP address is 192.168.4.27.
+Your IP address is 192.0.2.27.
 Low data mode is turned off.
 Your DNS servers are 1.1.1.1 and 9.9.9.9.
 Week 4 had the most active users with 1,720.

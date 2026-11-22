@@ -97,7 +97,7 @@ name = "settings"
   expect = [["harbor"]]
   [[scene.q]]
   ask = "What's my IP address?"
-  expect = [["192.168.4.27"]]
+  expect = [["192.0.2.27"]]
   [[scene.q]]
   ask = "Is low data mode turned on?"
   expect = [["off", "not ", "isn't", "disabled", "no,", "no."]]
@@ -106,7 +106,7 @@ name = "settings"
   expect = [["1.1.1.1"], ["9.9.9.9"]]
   [[scene.q]]
   ask = "What's the router's address?"
-  expect = [["192.168.4.1"]]
+  expect = [["192.0.2.1"]]
   [[scene.q]]
   ask = "Explain in detail what each of these three toggles does, and reason through which ones I should change for privacy on a public network."
   hard = true
