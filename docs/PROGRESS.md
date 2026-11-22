@@ -16,7 +16,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **Code done.** DEEP chosen (Qwen3.8-27B, pinned) and measured; FAST-only default, think harder on demand |
 | M5: overlay, settings, model management | **Code done.** Overlay, settings window, models page, personality, visual redesign; hands-on checks next |
-| Public release preparation | **Prepared, not public.** Audit, README, SECURITY, CONTRIBUTING, templates done; decisions with the maintainer (see below) |
+| Public release preparation | **Ready, not public.** Licence chosen, log gaps fixed; the rest is the maintainer's checklist (see below) |
 
 ## Public release preparation (2026-11-22)
 
@@ -33,15 +33,26 @@ maintainer's decisions.
   `pull_request_target`, no secrets or deploy steps; fmt, clippy, tests,
   audit, deny and gitleaks all run. No change needed.
 - Logs: per-turn lines hold codes and timings only. Two gaps found and
-  documented in SECURITY.md, not fixed yet: a Kokoro phonemizer error can
-  name a word of an answer (`no phonemes matched for '<word>'`), and a
-  failed model request logs up to 500 characters of the server's error body.
+  fixed (2026-11-22): a Kokoro phonemizer error could name a word of an
+  answer (now the error keeps only the sentence length and the log line a
+  code and length), and `ChatError` kept the server's error body and
+  serde's message (now a status code plus a fixed list of known messages,
+  and fixed protocol strings; the app's turn line already showed only the
+  status). Tests check neither path can carry answer or server text.
 - New files: README rewrite, SECURITY.md, CONTRIBUTING.md, issue and pull
   request templates, `docs/images/` (PNGs allowed only there), `*.log`
   ignored. THIRD_PARTY.md now lists every model and licence, the Parakeet
   CC-BY-4.0 attribution and the LFM Open License terms in plain words.
-- Waiting on the maintainer: the licence (MIT, Apache-2.0 or both), the
-  misaki dictionary-data question, and the checklist in the audit report.
+- Decisions (maintainer, 2026-11-22): licence **MIT OR Apache-2.0**
+  (`LICENSE-MIT`, `LICENSE-APACHE`, every crate's `license`); misaki
+  dictionary data **kept with the note, source only**: no binaries are
+  distributed, and the README says this must be resolved (likely CMUdict)
+  before any are; security reports through GitHub private vulnerability
+  reporting only (no email); the eval mock screen now uses 192.0.2.x.
+- Left for the maintainer: repo URL in the README, acknowledgement time in
+  SECURITY.md, description/topics/social preview, private vulnerability
+  reporting and branch protection on GitHub, logo and demo, name check,
+  first CI run, and making the repository public.
 
 ## Kokoro milestone (resumed 2026-11-17)
 
