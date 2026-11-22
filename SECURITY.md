@@ -60,5 +60,4 @@ Please **do not open a public issue** for a security problem.
 
 Include what you found, how to reproduce it, the glance commit, your macOS
 version and Mac model. Please don't include screenshots or recordings of
-private screen content. You can expect an acknowledgement within a week.
-TODO (maintainer): confirm this response time.
+private screen content. You can expect an acknowledgement within usually a week or two.
