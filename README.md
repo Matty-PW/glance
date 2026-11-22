@@ -1,353 +1,236 @@
+<!-- TODO: logo. Add docs/images/logo.png (see docs/images/README.md), then:
+<p align="center"><img src="docs/images/logo.png" alt="glance" width="96"></p> -->
+
 # glance
 
-**Ask your Mac about what's on screen, out loud, and hear the answer. Everything stays on your machine.**
+**Ask your Mac about what's on screen, out loud, and hear the answer, with everything running locally.**
 
-Hold a hotkey, ask a question ("what's this error?", "how much did we spend
-in August?"), let go. glance takes a screenshot, transcribes your question,
-asks a local vision model, and speaks the answer back while it streams onto a
-small overlay. For harder questions, *think harder* hands the same question
-and screenshot to a bigger local model.
+<!-- TODO: demo. Add docs/images/demo.gif (a short screen recording of one
+question and answer, see docs/images/README.md), then:
+<p align="center"><img src="docs/images/demo.gif" alt="glance answering a question about a chart" width="720"></p> -->
 
-- **Local only.** Speech recognition, the vision models and the voice all run
-  on your Mac. No telemetry, no analytics, no update checks, no cloud.
-- **Fast.** The first spoken word comes about 1.1 s after you let go of the
-  key (4B model on an M4 Pro).
-- **Native.** A menu-bar app with an overlay that never takes focus and a
-  native settings window, written in Rust.
+Hold a hotkey, ask ("what's this error?", "how much did we spend in
+August?"), let go. glance takes a screenshot, transcribes your question,
+asks a local vision model, and speaks the answer while it streams onto a
+small overlay.
 
-> **Status:** in development, macOS on Apple Silicon only. Milestones M0 to
-> M5 are built (see [Roadmap](#roadmap)); the hands-on acceptance runs are
-> still open. There are no binary releases.
+> **Status: early.** macOS on Apple Silicon only, built from source. See
+> [Status and limitations](#status-and-limitations).
 
----
+## Why glance
 
-## Contents
-
-- [How it works](#how-it-works)
-- [Privacy and security](#privacy-and-security)
-- [Requirements](#requirements)
-- [Getting started](#getting-started)
-- [Using glance](#using-glance)
-- [Settings](#settings)
-- [Models](#models)
-- [Command line](#command-line)
-- [Development](#development)
-- [Roadmap](#roadmap)
-- [Licence](#licence)
-
-## How it works
-
-```
-hold Ctrl+Opt+G ──► screenshot (ScreenCaptureKit) ──► image prefilled into FAST
-speak           ──► microphone, in memory only
-release         ──► speech-to-text (Parakeet) ──► FAST vision model (llama-server)
-                                                   │ streams sentences
-                                                   ▼
-                          overlay text  ◄──  voice (Kokoro or the macOS voice)
-```
-
-| Part | What runs | Where |
-|---|---|---|
-| Speech-to-text | Parakeet TDT 0.6B v3 (int8 ONNX) | in-process |
-| FAST model | Qwen3-VL 4B Instruct (Q4_K_M GGUF) | `llama-server` on 127.0.0.1, started by glance |
-| DEEP model (optional) | Qwen3.8 27B (Q4_K_M GGUF), loaded only when asked | `llama-server` on 127.0.0.1 |
-| Voice | Kokoro-82M (fp32 ONNX), or the macOS system voice | in-process |
-
-The screenshot is sent to the model while you are still talking, so answering
-starts the moment you let go. Answers are spoken sentence by sentence as they
-arrive.
-
-## Privacy and security
-
-These are design rules, enforced in code (see [CLAUDE.md](CLAUDE.md) for the
-full list):
-
-- **Screenshots and audio stay in memory.** They are never written to disk,
-  logs or crash reports.
-- **No network traffic** except to the model servers on 127.0.0.1 and model
-  downloads from Hugging Face. glance's own servers bind to 127.0.0.1 on a
-  random port with a per-launch key.
-- **Pinned downloads.** Every model file is pinned by commit and SHA-256 in
-  [`models.toml`](models.toml), downloaded over HTTPS from `huggingface.co`
-  (redirects only to an exact list of Hugging Face CDN hosts), and hashed
-  again before use. Only GGUF, ONNX and safetensors are loaded, never pickle
-  formats.
-- **Screen content is untrusted.** The model has no tools, no shell and no
-  file access; its output is only shown and spoken.
-- **Licences.** No GPL-family dependencies (enforced by `deny.toml`). Model
-  licences are listed per model; special cases are in
-  [THIRD_PARTY.md](THIRD_PARTY.md).
+- **Your screen never leaves your Mac.** Speech recognition, the vision
+  model and the voice all run locally. No account, no cloud, no telemetry.
+- **Fast enough to talk to.** About 1.1 s from letting go of the key to the
+  first spoken word (4B model, measured on an M4 Pro).
+- **Hands-free questions.** No copying text or attaching screenshots: you
+  ask about whatever is in front of you.
+- **Small, inspectable and pinned.** One Rust workspace; every model file is
+  pinned by commit and SHA-256; no GPL-family dependencies.
 
 ## Requirements
 
-- A Mac with Apple Silicon, macOS 14.2 or later. The default setup uses about
-  7 GB of memory; the optional DEEP model needs about 20 GB more.
-- Xcode Command Line Tools (full Xcode is not needed).
-- [rustup](https://rustup.rs). The toolchain version is pinned in
-  `rust-toolchain.toml` and installed on first build.
+- Apple Silicon Mac, macOS 14.2 or later.
+- Xcode Command Line Tools (full Xcode is not needed) and
+  [rustup](https://rustup.rs); the Rust version is pinned in
+  `rust-toolchain.toml`.
 - `llama-server` from llama.cpp: `brew install llama.cpp`.
-- About 4.5 GB of disk for the default models (another 18 GB for DEEP).
+- Disk: about 4.5 GB for the default models; another 18 GB for the optional
+  *think harder* model.
 
-## Getting started
+**Memory.** Measured resident memory (glance with speech recognition and the
+voice, plus its model server):
 
-**1. Build and download the models**
+| Setup | FAST model | Think harder (DEEP) | Memory |
+|---|---|---|---|
+| Default | Qwen3-VL 4B | off | 7.0 GB |
+| Larger FAST | Qwen3-VL 8B | off | 9.8 GB |
+| With DEEP loaded | Qwen3-VL 4B | Qwen3.8 27B, on demand | 26.4 GB (7.0 GB while DEEP is unloaded) |
+
+Suggested by RAM (a design note: glance does not pick a preset for you yet,
+you choose models in Settings):
+
+| RAM | Suggested setup |
+|---|---|
+| 8 GB | Not supported: the default setup needs 7.0 GB beside macOS |
+| 16 GB | Default (4B). TODO: not yet tested on a 16 GB Mac |
+| 32 GB | Default, or the 8B FAST model. TODO: not yet tested on a 32 GB Mac |
+| 48 GB+ | Default plus DEEP on demand (measured on 48 GB) |
+
+## Quick start
+
+**1. Download the models** (each file is checked against its pinned SHA-256)
 
 ```sh
-git clone <this repository> glance && cd glance
+git clone <TODO: repository URL> glance && cd glance
 alias glance='cargo run --release -q -p glance --'
 
-glance models pull qwen3-vl-4b-instruct-q4km    # FAST vision model, 3.3 GB
+glance models pull qwen3-vl-4b-instruct-q4km    # vision model, 3.3 GB
 glance models pull parakeet-tdt-0.6b-v3-int8    # speech recognition, 0.7 GB
 glance models pull kokoro-82m-v1.0-fp32         # voice, 0.3 GB
 glance models pull kokoro-82m-v1.0-voices-en    # 28 English voices
 ```
 
-Every file is checked against its pinned SHA-256 before it is stored.
-
-**2. Build the app**
+**2. Build and sign the app**
 
 ```sh
 security find-identity -v -p codesigning        # pick a signing identity
 export GLANCE_SIGN_IDENTITY=<its SHA-1>
-cargo xtask bundle                              # builds and signs target/bundle/Glance.app
-```
-
-With a stable signing identity, macOS keeps your permission grants across
-rebuilds. Without one, glance is signed ad hoc and macOS asks again after
-every build.
-
-**3. Run it**
-
-```sh
+cargo xtask bundle                              # → target/bundle/Glance.app
 open target/bundle/Glance.app --args app
 ```
 
-Or, to see its log in your terminal:
+A stable signing identity lets macOS keep your permission grants across
+rebuilds; without one, glance is signed ad hoc and macOS asks again after
+each build.
 
-```sh
-open -W --stderr "$(tty)" target/bundle/Glance.app --args app
-```
+**3. Allow access.** On first use macOS asks for **Screen Recording** and
+**Microphone**. The menu-bar menu shows anything still missing, with a link
+to System Settings.
 
-On first use macOS asks for **Screen Recording** and **Microphone** access;
-the menu-bar menu shows what is missing and links to System Settings. glance
-starts its model server itself, and stops it when you quit. If it ever
-crashes, the next start cleans up the leftover server.
-
-To see the overlay without asking anything, add `--overlay-demo`; it plays
-through every state twice.
-
-## Using glance
+**4. Ask.**
 
 | Hotkey | Action |
 |---|---|
-| **Hold** `⌃ ⌥ G` | Ask about the screen. Follow-up questions reuse the same screenshot. |
-| **Hold** `⌃ ⌥ ⇧ G` | Take a fresh screenshot, then ask. |
-| **Tap** `⌃ ⌥ T` | *Think harder:* ask DEEP the last question again, same screenshot. |
-| **Hold** `⌃ ⌥ T` | Ask DEEP something new about the same screenshot. |
+| Hold `⌃ ⌥ G` | Ask about the screen. Follow-ups reuse the same screenshot. |
+| Hold `⌃ ⌥ ⇧ G` | Take a fresh screenshot, then ask. |
+| Tap `⌃ ⌥ T` | *Think harder:* ask the bigger model the last question again. |
+| Hold `⌃ ⌥ T` | Ask the bigger model something new about the same screenshot. |
 
-All hotkeys can be changed in Settings. Pressing any hotkey while glance is
-talking stops it and starts listening.
+Speak while holding, let go to get the answer. Any hotkey stops a reply and
+starts listening. "Tell me more" continues an answer; saying "think harder"
+works like the hotkey. Hotkeys can be changed in Settings.
 
-- **Follow-ups.** A session keeps the screenshot and the last 12 questions, so
-  you can ask "and in September?". It ends after 10 minutes idle, or with
-  **New session** in the menu-bar menu.
-- **Think harder.** Saying "think harder" also works. DEEP loads on demand
-  (glance says so while it loads) and unloads after 10 minutes unused.
-- **More, or less.** "Tell me more" or "go on" continues where the answer
-  stopped. "Walk me through…" or "in detail" always gets the full answer.
-- **The overlay** sits in the top-right corner without taking focus, and you
-  can click through it. It shows the state (Ready, Listening with a live mic
-  waveform, Thinking, Speaking), your question, and the answer as it is
-  spoken, then fades out. It follows light and dark mode, Reduce Motion and
-  Reduce Transparency.
+## Configuration
 
-## Settings
+Open **Settings…** from the menu-bar icon (sections: Voice, Answers,
+Personality, Think harder, Models, Hotkeys, Appearance, About), or edit
+`~/Library/Application Support/glance/config.toml`. The main settings:
 
-Open **Settings…** from the menu-bar icon. Most changes apply straight away;
-rows marked *Restart to apply* take effect after a restart, and each section
-has *Restore defaults…*.
+| Setting | Default | What it does |
+|---|---|---|
+| `speech.engine` | `kokoro` | Kokoro (local neural voice) or `system` (the macOS voice) |
+| `speech.voice` | `af_heart` | Kokoro voice, or a blend such as `af_heart:0.6,bf_emma:0.4` |
+| `speech.speed` | `1.0` | Kokoro pace, 0.5 to 2.0 |
+| `speech.math_as_words` | `false` | Say "2 × 2 = 4" as "2 times 2 equals 4" |
+| `models.fast` | `qwen3-vl-4b-instruct-q4km` | The model that answers every question |
+| `models.deep` | none | Optional bigger model for *think harder*, loaded on demand |
+| `models.response_length` | `medium` | `short`, `medium` or `long` |
+| `models.personality` | `neutral` | Also `friendly`, `direct`, `strict`, `pirate`, `caveman`, `shakespearean`, `custom` |
+| `models.auto_escalate` | `false` | Let FAST hand hard questions to DEEP by itself |
+| `appearance.accent` | `glance` | Accent colour: glance's coral or the macOS accent (`system`) |
+| `hotkeys.talk` / `look` / `think` | `Ctrl+Opt+G` / `Ctrl+Opt+Shift+G` / `Ctrl+Opt+T` | The three chords |
 
-| Section | What you can change |
-|---|---|
-| Voice | Kokoro or the macOS voice, the voice, speed, saying maths symbols as words ("2 × 2 = 4" → "2 times 2 equals 4") |
-| Answers | Answer length: short, medium or long |
-| Personality | Neutral, friendly, direct, strict, three fun ones (pirate, caveman, Shakespearean) or your own style. Personality changes how answers sound, never how long they are. |
-| Think harder | DEEP's reasoning effort, when to unload it |
-| Models | FAST and DEEP model, DEEP's thinking cap, automatic hand-over; download, check, repair and delete pinned models |
-| Hotkeys | The three chords. A new chord only takes effect if macOS lets glance register it; otherwise the old one stays. |
-| Appearance | Accent colour: glance's coral or your macOS accent |
-| About | Version, model licences, third-party notices |
+An invalid file is reported with the problem named; glance never silently
+ignores a setting. Every option is documented at the top of
+[`crates/app/src/config.rs`](crates/app/src/config.rs).
 
-Everything is stored in `~/Library/Application Support/glance/config.toml`,
-which you can also edit by hand. The settings window changes only the keys it
-owns and keeps your comments. An invalid file is reported with the problem
-named, never silently ignored.
+## Architecture
 
-<details>
-<summary>All config options</summary>
-
-```toml
-[speech]
-engine = "kokoro"        # or "system" (the macOS voice)
-kokoro_model = "fp32"    # or "q8f16" (smaller, about 3x slower)
-voice = "af_heart"       # see `glance voices`; a blend: "af_heart:0.6,bf_emma:0.4"
-speed = 1.0              # Kokoro pace, 0.5 to 2.0
-volume = 1.0             # 0.0 to 1.0
-threads = 10             # ONNX Runtime threads for Kokoro
-system_voice = "en-GB"   # for engine = "system": identifier or language
-system_rate = 0.5        # 0.0 (slow) to 1.0 (fast)
-math_as_words = false    # say "2 x 2 = 4" as "2 times 2 equals 4" (speech only)
-
-[models]
-fast = "qwen3-vl-4b-instruct-q4km"  # a vision model from models.toml
-deep = "qwen3.8-27b-q4km"           # optional; leave out for FAST only (the default)
-auto_escalate = false               # let FAST hand hard questions to DEEP by itself
-deep_idle_secs = 600                # unload DEEP after this long unused
-response_length = "medium"          # short | medium | long
-personality = "neutral"             # neutral | friendly | direct | strict |
-                                    # pirate | caveman | shakespearean | custom
-personality_custom = ""             # for "custom": up to 300 characters
-fast_ctx = 8192
-deep_ctx = 16384
-deep_effort = "medium"              # off | low | medium | xhigh
-deep_thinking_budget = 128          # cap on DEEP's thinking tokens; 0 = no cap
-deep_mtp = true                     # speculative decoding with the model's MTP layers
-# Your own servers instead (loopback only):
-# fast_endpoint = "http://127.0.0.1:8080/v1"
-# deep_endpoint = "http://127.0.0.1:8081/v1"
-
-[overlay]
-enabled = true
-
-[appearance]
-accent = "glance"                   # or "system"
-
-[hotkeys]                           # Ctrl, Opt, Shift, Cmd, then one key
-talk = "Ctrl+Opt+G"
-look = "Ctrl+Opt+Shift+G"
-think = "Ctrl+Opt+T"
+```
+            menu-bar app (glance-macos: AppKit, ScreenCaptureKit, Carbon hotkeys)
+ hotkey ─────────┐
+                 ▼
+          ┌─────────────┐  screenshot  ┌──────────────────────────┐
+          │ orchestrator│─────────────►│ FAST llama-server        │
+ mic ────►│ (turns,     │  question    │ 127.0.0.1, random port,  │
+ (memory  │  sessions,  │─────────────►│ per-launch key           │
+  only)   │  think      │◄─ sentences ─│ (DEEP: same, on demand)  │
+          │  harder)    │              └──────────────────────────┘
+          └──────┬──────┘
+   Parakeet STT  │  sentences
+   (in-process)  ▼
+          voice (Kokoro / macOS) ──► speakers
+          overlay text ─────────────► floating panel
 ```
 
-</details>
+The orchestrator owns the turn: it sends the screenshot to the model while
+you talk, transcribes when you let go, streams the answer sentence by
+sentence to the voice and the overlay, and keeps a session for follow-ups.
+Capture, hotkeys, audio, speech recognition, voices and the model client sit
+behind traits, so the core crates contain no platform code and are tested
+with mocks. The design is in [docs/DESIGN.md](docs/DESIGN.md).
 
-## Models
+## Privacy and security
 
-All models are pinned in [`models.toml`](models.toml) and managed from
-**Settings → Models** or `glance models`.
+What glance does, and where the code enforces it:
+
+- **Screenshots and audio stay in memory.** They are never written to disk.
+  Each screenshot is a PNG held in memory and sent only to glance's own
+  model server; recordings are buffers that are dropped after
+  transcription.
+- **glance's own windows are left out** of the screenshots it takes.
+- **Model servers are local and private.** glance starts `llama-server`
+  bound to `127.0.0.1` on a random port, with a key created for each launch
+  (passed in the environment, so it never appears in `ps`). Endpoints you
+  configure yourself must also be loopback.
+- **The model can't act.** Screen content is treated as untrusted input:
+  the model has no tools, no shell and no file access. Its output is only
+  shown and spoken.
+- **No telemetry**, analytics, crash reporting or update checks.
+
+**Network access, completely:**
+
+| When | What | Why |
+|---|---|---|
+| **Running glance** | **Model downloads from Hugging Face** (`huggingface.co`, redirects only to an exact list of Hugging Face CDN hosts, HTTPS only, each file checked against its pinned SHA-256) | Only when you download a model (`glance models pull` or Settings → Models) |
+| Running glance | `127.0.0.1` only | Talking to its own model servers |
+| Building glance | crates.io (Cargo), and ONNX Runtime from `cdn.pyke.io` (the `ort-sys` build script, checked against a SHA-256 in the crate) | Compiling only; nothing is downloaded at run time |
+
+Downloading a model is the only time glance itself uses the network. More
+detail, and how to report a vulnerability: [SECURITY.md](SECURITY.md).
+
+## Models and licences
+
+glance **does not include or redistribute any model weights.** The
+repository holds only [`models.toml`](models.toml), which pins each file by
+Hugging Face commit, size and SHA-256. You download the weights yourself,
+from that manifest only, and each model stays under its own licence:
 
 | Model | Role | Size | Licence |
 |---|---|---|---|
-| `qwen3-vl-4b-instruct-q4km` | FAST (default) | 3.3 GB | Apache-2.0 |
-| `qwen3-vl-8b-instruct-q4km` | FAST, larger | 6.2 GB | Apache-2.0 |
-| `lfm2.5-vl-3b-q4km` | FAST, alternative | 2.5 GB | LFM Open License v1.0 |
-| `qwen3.8-27b-q4km` | DEEP (think harder) | 18.4 GB | Apache-2.0 |
-| `parakeet-tdt-0.6b-v3-int8` | Speech-to-text (default) | 0.7 GB | CC-BY-4.0 |
-| `parakeet-tdt-0.6b-v2-int8` | Speech-to-text, English only | 0.7 GB | CC-BY-4.0 |
-| `kokoro-82m-v1.0-fp32` | Voice (default) | 0.3 GB | Apache-2.0 |
-| `kokoro-82m-v1.0-q8f16` | Voice, smaller | 0.1 GB | Apache-2.0 |
-| `kokoro-82m-v1.0-voices-en` | 28 English voices | 0.01 GB | Apache-2.0 |
+| Qwen3-VL 4B Instruct (Q4_K_M) | FAST, default | 3.3 GB | Apache-2.0 |
+| Qwen3-VL 8B Instruct (Q4_K_M) | FAST, larger | 6.2 GB | Apache-2.0 |
+| LFM2.5-VL 3B (Q4_K_M) | FAST, alternative | 2.5 GB | LFM Open License v1.0 |
+| Qwen3.8 27B (Q4_K_M) | DEEP, think harder | 18.4 GB | Apache-2.0 |
+| Parakeet TDT 0.6B v3 (int8) | Speech recognition | 0.7 GB | CC-BY-4.0 (NVIDIA) |
+| Kokoro-82M v1.0 + 28 English voices | Voice | 0.3 GB | Apache-2.0 |
 
-Measured on an M4 Pro (48 GB):
+**LFM Open License, in plain words:** free to use, change and share. If you
+share it, include the licence and mark your changes. Commercial use is
+licensed only while you and your affiliated companies have under USD 10
+million in annual revenue. Suing over patents in the model, or breaking the
+terms, ends the licence. The LFM model is optional and never downloaded
+unless you ask.
 
-| | FAST 4B | FAST 8B | DEEP 27B (think harder) |
-|---|---|---|---|
-| Memory, with speech and voice | 7.0 GB | 9.8 GB | about +19 GB |
-| Key-up to first spoken word | ~1.1 s | ~1.1 s | ~10 s once loaded; ~49 s from cold |
-| Ordinary questions correct (eval set) | 12/12 | 12/12 | — |
+Full attributions (including NVIDIA's Parakeet under CC-BY-4.0) and the
+third-party caveats are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
-Details and methods are in [docs/PROGRESS.md](docs/PROGRESS.md).
+## Status and limitations
 
-## Command line
+glance is early software, built and tested by one developer on one Mac.
 
-The app is one subcommand of the `glance` binary; the rest are tools for
-checking and measuring.
+- **macOS only, Apple Silicon only.** Windows is planned (the platform code
+  already sits behind traits); there is no Windows code yet.
+- **Build from source.** There are no signed or notarised releases.
+- **Not yet accepted end to end.** All planned features (milestones M0 to M5,
+  see [docs/PROGRESS.md](docs/PROGRESS.md)) are built and tested with mocks,
+  benchmarks and in-process UI snapshots. The hands-on runs through the app
+  (permission prompts, spoken turns, the redesigned windows) are still open.
+- **English.** The voices and prompts are English. TODO: other languages
+  are untested.
+- **No remote models yet.** Only local servers; remote endpoints with keys
+  in the macOS Keychain are a later milestone.
+- **Licence not chosen yet** (see [Licence](#licence)).
 
-| Command | What it does |
-|---|---|
-| `glance app` | The menu-bar app (`--overlay-demo`, `--open-settings`, `--open-models`) |
-| `glance models list \| pull <id> \| verify [id]` | Pinned models: status, download, re-hash |
-| `glance say "text"` | Speak text with the current voice (`--voice`, `--speed`, `--engine`) |
-| `glance voices` | List the Kokoro voices and English system voices |
-| `glance serve <id>` | Verify a vision model and run `llama-server` for it on 127.0.0.1 |
-| `glance mic-check`, `glance capture-check` | Check the microphone and screen capture (nothing is kept) |
-| `glance bench`, `fast-bench`, `deep-bench` | Run the evaluation set against the models |
-| `glance stt-bench`, `tts-bench` | Measure speech recognition and voices |
-| `glance ui-snapshots` | Draw glance's own windows to PNGs for layout review |
+## Contributing
 
-Run any command with `--help` for its options.
-
-## Development
-
-**Setup**
-
-```sh
-brew install gitleaks cargo-audit cargo-deny
-git config core.hooksPath .githooks   # once per clone: enables the pre-commit hook
-```
-
-The pre-commit hook refuses secrets, home-directory paths, model weights,
-audio, images and large files.
-
-**Checks** (CI runs the same, plus a full-history secret scan)
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cargo audit
-cargo deny check
-```
-
-**Layout**
-
-| Crate | Role |
-|---|---|
-| `orchestrator` | The turn state machine, sessions, escalation, settings types; platform-free and tested with mocks |
-| `llm-client` | OpenAI-compatible streaming client, managed `llama-server`, escalation gate |
-| `stt`, `tts`, `audio`, `capture` | Speech-to-text, voices, microphone and speaker, capture traits |
-| `models` | Manifest, pinned downloader, verification |
-| `macos` | Everything macOS: ScreenCaptureKit, hotkeys, system voice, menu bar, overlay, settings window, app bundle |
-| `app` | The `glance` binary: config, wiring, command-line tools |
-| `xtask` | `cargo xtask bundle` |
-
-Capture, hotkeys, audio, speech-to-text, voices and the model client sit
-behind traits, so the core crates contain no AppKit code.
-
-**Evaluation set.** `eval/` holds six mock application screens (HTML) with
-questions and expected answers, so model comparisons never use real screen
-content:
-
-```sh
-mkdir -p eval-local/shots
-for s in editor sheet mail terminal settings chart; do
-  swift eval/render.swift eval/scenes/$s.html eval-local/shots/$s.png
-done
-glance fast-bench --models qwen3-vl-4b-instruct-q4km
-```
-
-**UI review.** `glance ui-snapshots` draws every overlay state and settings
-section in light and dark mode, and at the minimum window size, with demo
-text, to `eval-local/ui/`. It never captures the screen. `eval-local/` is
-gitignored.
-
-## Roadmap
-
-| Milestone | Status |
-|---|---|
-| M0: command-line spike (record, transcribe, ask, time) | Done |
-| M1: voice with sentence streaming | Done (Kokoro default, macOS voice as an option) |
-| M2: hotkey, live capture, app bundle, permissions | Built; hands-on acceptance open |
-| M3: follow-ups, fresh look vs ask, session expiry | Built; spoken run open |
-| M4: escalation, managed servers, DEEP | Built; DEEP chosen and measured (Qwen3.8 27B) |
-| M5: overlay, settings, model management, redesign | Built; hands-on checks open |
-| Next | Remote endpoints with the macOS Keychain (with a security review) |
-
-The design is in [docs/DESIGN.md](docs/DESIGN.md), and status, measurements
-and open items in [docs/PROGRESS.md](docs/PROGRESS.md).
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers building,
+testing, the checks every change must pass, and the project's privacy and
+dependency rules. Please report security issues privately, as described in
+[SECURITY.md](SECURITY.md).
 
 ## Licence
 
-glance's own licence has not been chosen yet. Dependencies are limited to
-permissive licences by `deny.toml`. Model licences are listed above and in
-`models.toml`, and third-party caveats (notably the phonemizer's dictionary
-data) in [THIRD_PARTY.md](THIRD_PARTY.md).
+TODO: not chosen yet. Until a licence is added, no rights to reuse this code
+are granted. Dependency and model licences: [THIRD_PARTY.md](THIRD_PARTY.md).
