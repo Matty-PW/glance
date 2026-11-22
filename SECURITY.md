@@ -10,11 +10,12 @@ to report a problem.
   written to disk, logs or crash reports, and are sent only to glance's own
   model server on `127.0.0.1`. glance's own windows (the overlay, settings)
   are left out of every screenshot.
-- **Transcripts and answers are not logged.** The per-turn log line holds
-  timings, counts and status codes. Two known gaps, not yet closed: a
-  Kokoro error can name a word of an answer it could not pronounce, and a
-  failed model request logs up to 500 characters of the server's error
-  message. Check any log before sharing it.
+- **Transcripts, answers and screen text are never logged.** Log lines
+  hold timings, counts, status codes and fixed messages. Errors are built
+  so they can't carry content: a voice error keeps only the sentence's
+  length, and a model error keeps only the HTTP status and a message from a
+  fixed list (never the server's text); tests check both. Logs can contain
+  local file paths, which show your username.
 - **No telemetry**, analytics, crash reporting or update checks.
 
 ## Network rules
@@ -54,9 +55,8 @@ glance is pre-release; only the latest commit on `main` is supported.
 Please **do not open a public issue** for a security problem.
 
 - Use GitHub's private vulnerability reporting: the **Security** tab of this
-  repository → **Report a vulnerability**.
-- TODO (maintainer): add a dedicated security contact address here if you
-  want one besides GitHub.
+  repository → **Report a vulnerability**. This is the only channel; there
+  is no security email address.
 
 Include what you found, how to reproduce it, the glance commit, your macOS
 version and Mac model. Please don't include screenshots or recordings of

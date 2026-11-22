@@ -68,7 +68,7 @@ body:
       label: Log excerpt
       description: |
         Run `open -W --stderr "$(tty)" target/bundle/Glance.app --args app` and paste the relevant lines.
-        glance's logs are designed to hold only timings, counts and status codes, never transcripts, answers or text from your screen. Two known gaps (see SECURITY.md): an error can name one word of an answer, or quote a model server error. **Please read the log before pasting and remove anything personal**, including file paths that show your username.
+        glance's logs hold only timings, counts, status codes and fixed messages, never transcripts, answers or text from your screen (see SECURITY.md). They can contain file paths that show your username: **please read the log before pasting and remove anything personal.**
       render: text
   - type: checkboxes
     id: checks
