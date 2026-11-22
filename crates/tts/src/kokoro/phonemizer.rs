@@ -79,14 +79,20 @@ impl Phonemizer for Misaki {
                         }
                     })
                     .collect();
-                self.g2p
-                    .g2p(&plain)
-                    .map_err(|e| TtsError::Engine(format!("phonemizer: {e}")))?
-                    .0
+                // misaki's errors name the word they failed on, which comes
+                // from the answer: keep only the sentence length.
+                self.g2p.g2p(&plain).map_err(|_| unreadable(text))?.0
             }
         };
         // Anything still unknown is dropped rather than spoken as a marker.
         Ok(phonemes.replace(&self.g2p.unk, "").trim().to_owned())
+    }
+}
+
+/// The error for a sentence the phonemizer cannot read: its length only.
+fn unreadable(text: &str) -> TtsError {
+    TtsError::Phonemizer {
+        chars: text.chars().count(),
     }
 }
 
@@ -398,6 +404,17 @@ pub fn letter_to_sound(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unreadable_sentence_error_carries_only_its_length() {
+        let sentence = "Ask Zyxqvbn about the Ørsted invoice.";
+        let error = unreadable(sentence);
+        let text = error.to_string();
+        for word in ["Zyxqvbn", "Ørsted", "invoice", "Ask"] {
+            assert!(!text.contains(word), "{text}");
+        }
+        assert!(matches!(error, TtsError::Phonemizer { chars: 37 }));
+    }
 
     fn us() -> Misaki {
         Misaki::new(Accent::American)

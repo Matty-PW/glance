@@ -34,6 +34,22 @@ pub enum TtsError {
     EngineGone,
     #[error("speech engine error: {0}")]
     Engine(String),
+    /// A sentence could not be turned into phonemes. Only its length is
+    /// kept: the text is part of an answer (screen-derived), and errors end
+    /// up in logs.
+    #[error("the phonemizer could not read a sentence of {chars} characters")]
+    Phonemizer { chars: usize },
+}
+
+impl TtsError {
+    /// A fixed code for log lines, which must never carry sentence text.
+    pub fn code(&self) -> &'static str {
+        match self {
+            TtsError::EngineGone => "engine_gone",
+            TtsError::Engine(_) => "engine",
+            TtsError::Phonemizer { .. } => "phonemizer",
+        }
+    }
 }
 
 /// A speech engine that owns its own playback. Sentences are queued and

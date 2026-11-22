@@ -226,6 +226,17 @@ impl TextToSpeech for KokoroVoice {
 }
 
 /// Body of the engine thread. Ends when the [`KokoroVoice`] is dropped.
+/// The log line for a sentence that was not spoken: its length and the
+/// error's fixed code, never the sentence or the error's text (which can
+/// quote it, and the sentence is part of an answer).
+fn failure_line(sentence: &str, error: &TtsError) -> String {
+    format!(
+        "kokoro: a sentence of {} characters was not spoken ({})",
+        sentence.chars().count(),
+        error.code()
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn engine(
     mut model: KokoroModel,
@@ -301,11 +312,44 @@ fn engine(
                     Ok(true) => {}
                     Ok(false) => shared.cancelled(id),
                     Err(e) => {
-                        eprintln!("kokoro: {e}");
+                        eprintln!("{}", failure_line(&text, &e));
                         shared.cancelled(id);
                     }
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_sentence_is_logged_without_its_text() {
+        let sentence = "The total is 51,900 for Priyanka's marketing budget.";
+        for error in [
+            TtsError::Phonemizer { chars: 52 },
+            // Even an error whose own text quotes the sentence.
+            TtsError::Engine(format!("no phonemes matched for '{sentence}'")),
+            TtsError::EngineGone,
+        ] {
+            let line = failure_line(sentence, &error);
+            for word in [
+                "total",
+                "51,900",
+                "Priyanka",
+                "marketing",
+                "budget",
+                "phonemes",
+            ] {
+                assert!(!line.contains(word), "{line}");
+            }
+            assert!(
+                line.contains(&sentence.chars().count().to_string()),
+                "{line}"
+            );
+            assert!(line.contains(error.code()), "{line}");
         }
     }
 }
