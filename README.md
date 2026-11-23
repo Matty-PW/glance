@@ -5,9 +5,7 @@
 
 **Ask your Mac about what's on screen, out loud, and hear the answer, with everything running locally.**
 
-<!-- TODO: demo. Add docs/images/demo.gif (a short screen recording of one
-question and answer, see docs/images/README.md), then:
-<p align="center"><img src="docs/images/demo.gif" alt="glance answering a question about a chart" width="720"></p> -->
+<p align="center"><img src="docs/images/glance-demo.gif" alt="glance answering a question" width="720"></p>
 
 Hold a hotkey, ask ("what's this error?", "how much did we spend in
 August?"), let go. glance takes a screenshot, transcribes your question,
