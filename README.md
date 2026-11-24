@@ -1,11 +1,15 @@
 <!-- TODO: logo. Add docs/images/logo.png (see docs/images/README.md), then:
 <p align="center"><img src="docs/images/logo.png" alt="glance" width="96"></p> -->
 
+<div align="center">
+
 # glance
 
 **Ask your Mac about what's on screen, out loud, and hear the answer, with everything running locally.**
 
-<p align="center"><img src="docs/images/glance-demo.gif" alt="glance answering a question" width="720"></p>
+<img src="docs/images/glance-demo.gif" alt="glance answering a question" width="720">
+
+</div>
 
 Hold a hotkey, ask ("what's this error?", "how much did we spend in
 August?"), let go. glance takes a screenshot, transcribes your question,
