@@ -32,6 +32,29 @@ impl LiveScreen {
 
 impl ScreenCapture for LiveScreen {
     fn capture(&self) -> Result<Screenshot, CaptureError> {
+        self.shoot(None, true)
+    }
+}
+
+impl LiveScreen {
+    /// `glance capture-check --indicator` only: capture `display` with
+    /// glance's own windows left *in*, to show the check can see the
+    /// screenshot indicator when it is not excluded. Never used for an image
+    /// sent to a model.
+    pub fn capture_including_glance_for_check(
+        &self,
+        display: u32,
+    ) -> Result<Screenshot, CaptureError> {
+        self.shoot(Some(display), false)
+    }
+
+    /// Capture `display` (or the active display) with or without glance's
+    /// own windows.
+    fn shoot(
+        &self,
+        display: Option<u32>,
+        exclude_glance: bool,
+    ) -> Result<Screenshot, CaptureError> {
         if !screen_recording_granted() {
             return Err(CaptureError::PermissionDenied);
         }
@@ -59,8 +82,11 @@ impl ScreenCapture for LiveScreen {
                 frame: Rect::from(w.frame()),
             })
             .collect();
-        let index = pick_display(&display_frames, &window_info, front_pid, CGMainDisplayID())
-            .ok_or(CaptureError::NoDisplay)?;
+        let index = match display {
+            Some(id) => display_frames.iter().position(|(d, _)| *d == id),
+            None => pick_display(&display_frames, &window_info, front_pid, CGMainDisplayID()),
+        }
+        .ok_or(CaptureError::NoDisplay)?;
         let display = &displays[index];
 
         // Leave glance's own windows out of the picture.
@@ -68,7 +94,7 @@ impl ScreenCapture for LiveScreen {
         let applications = content.applications();
         let own: Vec<_> = applications
             .iter()
-            .filter(|a| a.process_id() == own_pid)
+            .filter(|a| exclude_glance && a.process_id() == own_pid)
             .collect();
         let filter = SCContentFilter::create()
             .with_display(display)

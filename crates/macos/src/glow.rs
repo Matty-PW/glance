@@ -479,9 +479,108 @@ fn screen_for(mtm: MainThreadMarker, display: Option<u32>) -> Option<Retained<NS
     }
 }
 
+// ---- exclusion check (`glance capture-check --indicator`) -------------------
+
+/// Edge differences (mean per channel, 0–255) between a capture with no
+/// glow and captures with the glow held on screen.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExclusionCheck {
+    /// The capture glance uses (glance's windows excluded).
+    pub excluded: f64,
+    /// A control capture with glance's windows left in.
+    pub control: f64,
+}
+
+/// What the numbers mean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The glow was on screen (the control saw it) and the real capture
+    /// did not see it.
+    Pass,
+    /// The real capture saw something at the edges.
+    Fail,
+    /// The control did not see the glow either, so this run proves nothing
+    /// (the glow never reached the screen, or the edges match the accent).
+    Inconclusive,
+}
+
+/// Above this, the edges changed visibly.
+pub const SEEN: f64 = 10.0;
+/// Below this, the edges are unchanged (allowing a little screen noise).
+pub const UNCHANGED: f64 = 1.5;
+
+impl ExclusionCheck {
+    pub fn verdict(&self) -> Verdict {
+        if self.control <= SEEN {
+            Verdict::Inconclusive
+        } else if self.excluded < UNCHANGED {
+            Verdict::Pass
+        } else {
+            Verdict::Fail
+        }
+    }
+}
+
+/// Prove the glow is not in glance's screenshots: capture `screen`'s
+/// active display with no glow (baseline), hold the full glow on it,
+/// capture again as glance does (glance excluded) and once with glance's
+/// windows left in (control), then compare the outer `band` pixels of each
+/// with the baseline. Only numbers come out; nothing is saved. Main thread;
+/// needs Screen Recording permission.
+pub fn exclusion_check(
+    screen: &crate::capture::LiveScreen,
+    band: u32,
+) -> Result<ExclusionCheck, String> {
+    use glance_capture::ScreenCapture;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2_foundation::{NSDate, NSRunLoop};
+
+    let mtm = MainThreadMarker::new().ok_or("must run on the main thread")?;
+    NSApplication::sharedApplication(mtm)
+        .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    let settle = |seconds: f64| {
+        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(seconds));
+    };
+    let fail = |e: glance_capture::CaptureError| e.to_string();
+
+    let baseline = screen.capture().map_err(fail)?;
+    let display = baseline
+        .display()
+        .ok_or("the capture did not name its display")?;
+    let full = look(Indicator::Glow, false, false).expect("glow");
+    hold(Some(display), full);
+    // Let the window server put the panel on screen.
+    settle(0.4);
+    let excluded = screen.capture();
+    let control = screen.capture_including_glance_for_check(display);
+    hide();
+    settle(0.1);
+    let (excluded, control) = (excluded.map_err(fail)?, control.map_err(fail)?);
+    let differ = |shot: &glance_capture::Screenshot| {
+        baseline
+            .edge_difference(shot, band)
+            .ok_or_else(|| "captures differ in size".to_owned())
+    };
+    Ok(ExclusionCheck {
+        excluded: differ(&excluded)?,
+        control: differ(&control)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_check_passes_only_when_the_control_saw_the_glow() {
+        let check = |excluded, control| ExclusionCheck { excluded, control }.verdict();
+        assert_eq!(check(0.2, 60.0), Verdict::Pass);
+        assert_eq!(check(12.0, 60.0), Verdict::Fail);
+        assert_eq!(check(1.5, 60.0), Verdict::Fail);
+        // The control saw nothing: the run says nothing either way.
+        assert_eq!(check(0.0, 0.3), Verdict::Inconclusive);
+        assert_eq!(check(40.0, 2.0), Verdict::Inconclusive);
+    }
 
     #[test]
     fn off_never_shows_and_glow_is_the_full_band() {

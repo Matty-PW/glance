@@ -93,6 +93,32 @@ impl Screenshot {
         self.display
     }
 
+    /// How different the outer `band` pixels of two same-sized screenshots
+    /// are: the mean absolute difference per colour channel, 0 to 255
+    /// (`None` if the sizes differ). For the screenshot indicator's
+    /// exclusion check; only this number comes out, never pixels.
+    pub fn edge_difference(&self, other: &Screenshot, band: u32) -> Option<f64> {
+        let (w, h) = (self.width(), self.height());
+        if (w, h) != (other.width(), other.height()) || w == 0 || h == 0 {
+            return None;
+        }
+        let (a, b) = (self.image.to_rgb8(), other.image.to_rgb8());
+        let band = band.min(w / 2).min(h / 2).max(1);
+        let in_band = |x: u32, y: u32| x < band || x >= w - band || y < band || y >= h - band;
+        let (mut total, mut count) = (0u64, 0u64);
+        for (x, y, pa) in a.enumerate_pixels() {
+            if !in_band(x, y) {
+                continue;
+            }
+            let pb = b.get_pixel(x, y);
+            for c in 0..3 {
+                total += u64::from(pa[c].abs_diff(pb[c]));
+            }
+            count += 3;
+        }
+        Some(total as f64 / count as f64)
+    }
+
     pub fn width(&self) -> u32 {
         self.image.width()
     }
@@ -255,6 +281,39 @@ mod tests {
         let shot = Screenshot::from_rgba(4, 2, vec![200; 4 * 2 * 4]).unwrap();
         assert_eq!((shot.width(), shot.height()), (4, 2));
         assert!(Screenshot::from_rgba(4, 2, vec![0; 10]).is_err());
+    }
+
+    #[test]
+    fn edge_difference_sees_only_the_edges() {
+        let grey = |w, h| Screenshot::from_rgba(w, h, vec![100; (w * h * 4) as usize]).unwrap();
+        let base = grey(20, 10);
+        assert_eq!(base.edge_difference(&grey(20, 10), 2), Some(0.0));
+        assert_eq!(base.edge_difference(&grey(10, 20), 2), None);
+
+        // Something in the middle only: the edges are unchanged.
+        let mut middle = vec![100u8; 20 * 10 * 4];
+        let at = |x: usize, y: usize| (y * 20 + x) * 4;
+        for c in 0..3 {
+            middle[at(10, 5) + c] = 255;
+        }
+        let middle = Screenshot::from_rgba(20, 10, middle).unwrap();
+        assert_eq!(base.edge_difference(&middle, 2), Some(0.0));
+
+        // An edge line 100 brighter on every channel, one pixel deep all
+        // round: 56 of the 2-pixel band's 104 pixels changed.
+        let mut edged = vec![100u8; 20 * 10 * 4];
+        for y in 0..10 {
+            for x in 0..20 {
+                if x == 0 || x == 19 || y == 0 || y == 9 {
+                    for c in 0..3 {
+                        edged[at(x, y) + c] = 200;
+                    }
+                }
+            }
+        }
+        let edged = Screenshot::from_rgba(20, 10, edged).unwrap();
+        let diff = base.edge_difference(&edged, 2).unwrap();
+        assert!((diff - 100.0 * 56.0 / 104.0).abs() < 1e-9, "{diff}");
     }
 
     #[test]
