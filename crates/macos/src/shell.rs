@@ -99,8 +99,9 @@ impl Shell for MacShell {
                 Update::State(state) => Some(OverlayEvent::State(*state)),
                 Update::Progress(progress) => Some(OverlayEvent::Progress(*progress)),
                 Update::Deep(status) => Some(OverlayEvent::Deep(*status)),
-                Update::Session(info) => Some(OverlayEvent::Session(*info)),
-                Update::Report(_) | Update::Screenshot(_) => None,
+                Update::Screenshot(used) => Some(OverlayEvent::Screenshot(*used)),
+                // The screenshot line comes from `Screenshot`, per turn.
+                Update::Session(_) | Update::Report(_) => None,
             };
             if let Some(event) = event {
                 DispatchQueue::main().exec_async(move || overlay::apply(event));

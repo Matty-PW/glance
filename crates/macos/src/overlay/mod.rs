@@ -31,7 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use dispatch2::DispatchQueue;
-use glance_orchestrator::{DeepStatus, Progress, SessionInfo, Shown, TurnState};
+use glance_orchestrator::{DeepStatus, Progress, ScreenshotUse, Shown, TurnState};
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::NSAppearanceCustomization;
@@ -51,6 +51,9 @@ const MARGIN: f64 = 16.0;
 const PADDING: f64 = 16.0;
 const STATUS_H: f64 = 20.0;
 const GAP: f64 = 10.0;
+/// The screenshot line under the status row.
+const SHOT_H: f64 = 14.0;
+const SHOT_GAP: f64 = 3.0;
 /// The answer scrolls (kept at its end) beyond this share of the screen.
 const MAX_SCREEN_SHARE: f64 = 0.4;
 /// How long the overlay stays after a turn ends.
@@ -69,7 +72,7 @@ pub enum OverlayEvent {
     State(TurnState),
     Progress(Progress),
     Deep(DeepStatus),
-    Session(SessionInfo),
+    Screenshot(ScreenshotUse),
     Shown(Shown),
 }
 
@@ -88,6 +91,8 @@ struct Overlay {
     glyph: Retained<Glyph>,
     status: Retained<NSTextField>,
     meta: Retained<NSTextField>,
+    /// "New screenshot taken" / "Using screenshot from 12 s ago".
+    shot: Retained<NSTextField>,
     asked: Retained<NSTextField>,
     scroll: Retained<NSScrollView>,
     body: Retained<NSTextField>,
@@ -96,7 +101,9 @@ struct Overlay {
     deep: Option<DeepStatus>,
     question: String,
     reply: String,
-    screenshot_taken: Option<Instant>,
+    /// The screenshot line's text, fixed when the turn says which
+    /// screenshot it uses (so its age does not tick while being read).
+    shot_line: String,
     hide_at: Option<Instant>,
     /// Shown, or fading in; false once a fade-out has started.
     visible: bool,
@@ -179,6 +186,11 @@ pub fn install() {
     meta.setTextColor(Some(&NSColor::secondaryLabelColor()));
     meta.setAlignment(objc2_app_kit::NSTextAlignment::Right);
     meta.setLineBreakMode(NSLineBreakMode::ByTruncatingHead);
+    // The screenshot line: as quiet as the meta text, under the status.
+    let shot = NSTextField::labelWithString(&NSString::from_str(""), mtm);
+    shot.setFont(Some(&NSFont::systemFontOfSize(11.0)));
+    shot.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    shot.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
 
     // The question: quieter than the answer, at most two lines.
     let asked = NSTextField::wrappingLabelWithString(&NSString::from_str(""), mtm);
@@ -200,7 +212,7 @@ pub fn install() {
     scroll.setHasVerticalScroller(false);
     scroll.setDocumentView(Some(&body));
 
-    for view in [&*glyph as &NSView, &status, &meta, &asked, &scroll] {
+    for view in [&*glyph as &NSView, &status, &meta, &shot, &asked, &scroll] {
         root.addSubview(view);
     }
 
@@ -213,6 +225,7 @@ pub fn install() {
             glyph,
             status,
             meta,
+            shot,
             asked,
             scroll,
             body,
@@ -221,7 +234,7 @@ pub fn install() {
             deep: None,
             question: String::new(),
             reply: String::new(),
-            screenshot_taken: None,
+            shot_line: String::new(),
             hide_at: None,
             visible: false,
             fade: None,
@@ -255,6 +268,10 @@ pub fn apply(event: OverlayEvent) {
         let Some(o) = overlay.as_mut() else { return };
         match event {
             OverlayEvent::State(state) => {
+                // A new turn: its screenshot update follows Listening.
+                if state == TurnState::Listening && o.turn_state != TurnState::Listening {
+                    o.shot_line.clear();
+                }
                 o.turn_state = state;
                 if state != TurnState::Thinking {
                     o.progress = None;
@@ -268,7 +285,7 @@ pub fn apply(event: OverlayEvent) {
             }
             OverlayEvent::Progress(progress) => o.progress = Some(progress),
             OverlayEvent::Deep(status) => o.deep = Some(status),
-            OverlayEvent::Session(info) => o.screenshot_taken = info.screenshot_taken,
+            OverlayEvent::Screenshot(used) => o.shot_line = shot_text(used, Instant::now()),
             OverlayEvent::Shown(Shown::Clear) => {
                 o.question.clear();
                 o.reply.clear();
@@ -332,6 +349,7 @@ pub(crate) fn stage(
     progress: Option<Progress>,
     question: &str,
     reply: &str,
+    shot: Option<ScreenshotUse>,
     levels: [f32; 5],
     dark: bool,
 ) -> Option<(Retained<NSPanel>, Retained<NSView>)> {
@@ -343,7 +361,7 @@ pub(crate) fn stage(
         o.progress = progress;
         o.question = question.to_owned();
         o.reply = reply.to_owned();
-        o.screenshot_taken = Some(Instant::now() - Duration::from_secs(42));
+        o.shot_line = shot.map_or_else(String::new, |used| shot_text(used, Instant::now()));
         o.levels = levels;
         o.frozen = Some(0.4);
         o.reduce_motion = true;
@@ -462,6 +480,8 @@ impl Overlay {
             format!("“{}”", self.question)
         };
         self.asked.setStringValue(&NSString::from_str(&asked));
+        self.shot
+            .setStringValue(&NSString::from_str(&self.shot_line));
         let body = tail(&self.reply, MAX_REPLY_CHARS);
         self.body.setStringValue(&NSString::from_str(&body));
         self.glyph.set_shape(self.shape());
@@ -496,7 +516,8 @@ impl Overlay {
         } else {
             GAP + shown_body
         };
-        let target = (PADDING + STATUS_H + asked_block + body_block + PADDING).ceil();
+        let target =
+            (PADDING + STATUS_H + self.shot_block() + asked_block + body_block + PADDING).ceil();
         if self.height == 0.0 || self.reduce_motion || !self.panel.isVisible() {
             self.height = target;
             self.resize = None;
@@ -507,6 +528,15 @@ impl Overlay {
             start_animating();
         }
         self.place();
+    }
+
+    /// Height the screenshot line takes under the status row (0 without one).
+    fn shot_block(&self) -> f64 {
+        if self.shot_line.is_empty() {
+            0.0
+        } else {
+            SHOT_GAP + SHOT_H
+        }
     }
 
     fn max_body_height(&self) -> f64 {
@@ -545,6 +575,14 @@ impl Overlay {
             NSSize::new(meta_w, 16.0),
         ));
         let mut below = status_y;
+        if !self.shot_line.is_empty() {
+            below -= self.shot_block();
+            self.shot.setFrame(NSRect::new(
+                NSPoint::new(text_x, below),
+                NSSize::new(WIDTH - PADDING - text_x, SHOT_H),
+            ));
+        }
+        self.shot.setHidden(self.shot_line.is_empty());
         if self.asked_h > 0.0 {
             below -= GAP + self.asked_h;
             self.asked.setFrame(NSRect::new(
@@ -585,14 +623,27 @@ impl Overlay {
     }
 
     fn meta_text(&self) -> String {
-        let mut parts = Vec::new();
         if self.deep == Some(DeepStatus::Loading) && self.progress != Some(Progress::LoadingDeep) {
-            parts.push("loading the bigger model".to_owned());
+            "loading the bigger model".to_owned()
+        } else {
+            String::new()
         }
-        if let Some(taken) = self.screenshot_taken {
-            parts.push(format!("screenshot {}", age(taken.elapsed())));
+    }
+}
+
+/// The screenshot line: whether this turn took a new screenshot, or how
+/// old the one it reuses is (as of `now`).
+fn shot_text(used: ScreenshotUse, now: Instant) -> String {
+    match used {
+        ScreenshotUse::Fresh { .. } => "New screenshot taken".to_owned(),
+        ScreenshotUse::Reused { taken } => {
+            let secs = now.saturating_duration_since(taken).as_secs();
+            if secs < 60 {
+                format!("Using screenshot from {} s ago", secs.max(1))
+            } else {
+                format!("Using screenshot from {} min ago", secs / 60)
+            }
         }
-        parts.join(" · ")
     }
 }
 
@@ -622,14 +673,6 @@ fn state_text(state: TurnState) -> &'static str {
     }
 }
 
-fn age(elapsed: Duration) -> String {
-    match elapsed.as_secs() {
-        0..10 => "just taken".into(),
-        s @ 10..60 => format!("{s} s old"),
-        s => format!("{} min old", s / 60),
-    }
-}
-
 /// The last `max` characters, with an ellipsis when cut.
 fn tail(text: &str, max: usize) -> String {
     let count = text.chars().count();
@@ -654,10 +697,26 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_age_reads_naturally() {
-        assert_eq!(age(Duration::from_secs(3)), "just taken");
-        assert_eq!(age(Duration::from_secs(42)), "42 s old");
-        assert_eq!(age(Duration::from_secs(130)), "2 min old");
+    fn the_screenshot_line_says_new_or_how_old() {
+        let now = Instant::now();
+        assert_eq!(
+            shot_text(ScreenshotUse::Fresh { display: Some(1) }, now),
+            "New screenshot taken"
+        );
+        let reused = |secs| {
+            shot_text(
+                ScreenshotUse::Reused {
+                    taken: now - Duration::from_secs(secs),
+                },
+                now,
+            )
+        };
+        assert_eq!(reused(0), "Using screenshot from 1 s ago");
+        assert_eq!(reused(1), "Using screenshot from 1 s ago");
+        assert_eq!(reused(12), "Using screenshot from 12 s ago");
+        assert_eq!(reused(59), "Using screenshot from 59 s ago");
+        assert_eq!(reused(60), "Using screenshot from 1 min ago");
+        assert_eq!(reused(130), "Using screenshot from 2 min ago");
     }
 
     const STATES: [TurnState; 5] = [

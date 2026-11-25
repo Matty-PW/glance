@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
-use glance_orchestrator::{Progress, TurnState};
+use glance_orchestrator::{Progress, ScreenshotUse, TurnState};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_app_kit::{
@@ -85,8 +85,12 @@ pub fn overlay(out: &Path) -> Result<Vec<PathBuf>, String> {
     for dark in [false, true] {
         for (name, state, progress, question, reply) in states {
             let levels = [0.01, 0.04, 0.08, 0.05, 0.02];
+            // As in a follow-up: the line says how old the screenshot is.
+            let shot = (state != TurnState::Listening).then(|| ScreenshotUse::Reused {
+                taken: std::time::Instant::now() - std::time::Duration::from_secs(42),
+            });
             let (_panel, view) =
-                crate::overlay::stage(state, progress, question, reply, levels, dark)
+                crate::overlay::stage(state, progress, question, reply, shot, levels, dark)
                     .ok_or("overlay not installed")?;
             let mode = if dark { "dark" } else { "light" };
             let path = out.join(format!("overlay-{name}-{mode}.png"));
