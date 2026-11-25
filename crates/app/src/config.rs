@@ -46,6 +46,8 @@
 //!
 //! [appearance]
 //! accent = "glance"             # or "system": the macOS accent colour
+//! screenshot_indicator = "glow" # on a new screenshot: "glow" around the
+//!                               # display's edge, "subtle" (a thin line), or "off"
 //!
 //! [hotkeys]                     # modifiers Ctrl, Opt, Shift, Cmd, then one key
 //! talk = "Ctrl+Opt+G"           # ask about the screenshot
@@ -87,12 +89,18 @@ impl Default for OverlayConfig {
 pub struct AppearanceConfig {
     /// "glance" or "system".
     pub accent: String,
+    /// What marks a new screenshot: "glow", "subtle" or "off".
+    pub screenshot_indicator: String,
 }
+
+/// The values `[appearance] screenshot_indicator` takes.
+pub const SCREENSHOT_INDICATORS: [&str; 3] = ["glow", "subtle", "off"];
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             accent: "glance".into(),
+            screenshot_indicator: "glow".into(),
         }
     }
 }
@@ -342,6 +350,12 @@ impl Config {
                 config.appearance.accent
             );
         }
+        if !SCREENSHOT_INDICATORS.contains(&config.appearance.screenshot_indicator.as_str()) {
+            bail!(
+                "appearance.screenshot_indicator must be glow, subtle or off, got \"{}\"",
+                config.appearance.screenshot_indicator
+            );
+        }
         if !["off", "low", "medium", "xhigh"].contains(&config.models.deep_effort.as_str()) {
             bail!(
                 "models.deep_effort must be off, low, medium or xhigh, got \"{}\"",
@@ -447,5 +461,24 @@ mod tests {
         assert_eq!(Config::parse("").unwrap().appearance.accent, "glance");
         assert!(Config::parse("[appearance]\naccent = \"system\"\n").is_ok());
         assert!(Config::parse("[appearance]\naccent = \"teal\"\n").is_err());
+    }
+
+    #[test]
+    fn screenshot_indicator_defaults_to_glow_and_is_checked() {
+        assert_eq!(
+            Config::parse("").unwrap().appearance.screenshot_indicator,
+            "glow"
+        );
+        for value in SCREENSHOT_INDICATORS {
+            let text = format!("[appearance]\nscreenshot_indicator = \"{value}\"\n");
+            assert_eq!(
+                Config::parse(&text)
+                    .unwrap()
+                    .appearance
+                    .screenshot_indicator,
+                value
+            );
+        }
+        assert!(Config::parse("[appearance]\nscreenshot_indicator = \"flash\"\n").is_err());
     }
 }

@@ -37,6 +37,8 @@ pub struct SettingsValues {
     pub hotkeys: [String; 3],
     /// "glance" (glance's accent colour) or "system" (the macOS accent).
     pub accent: String,
+    /// What marks a new screenshot: "glow", "subtle" or "off".
+    pub screenshot_indicator: String,
 }
 
 /// What can be picked.
@@ -73,6 +75,8 @@ pub enum SettingsChange {
     Hotkeys([String; 3]),
     /// "glance" or "system"; the platform crate repaints.
     Accent(String),
+    /// "glow", "subtle" or "off"; the platform crate applies it.
+    ScreenshotIndicator(String),
     /// Applied by restarting glance.
     Models {
         fast: String,

@@ -174,6 +174,24 @@ mod tests {
     }
 
     #[test]
+    fn the_screenshot_indicator_saves_and_parses_back() {
+        let text = "[appearance]\naccent = \"glance\"\n";
+        let out = set_in(
+            text,
+            "appearance",
+            "screenshot_indicator",
+            Some(&Value::Str("subtle".into())),
+        );
+        assert_eq!(
+            out,
+            "[appearance]\naccent = \"glance\"\nscreenshot_indicator = \"subtle\"\n"
+        );
+        let parsed = crate::config::Config::parse(&out).unwrap();
+        assert_eq!(parsed.appearance.screenshot_indicator, "subtle");
+        assert_eq!(parsed.appearance.accent, "glance");
+    }
+
+    #[test]
     fn keys_that_share_a_prefix_are_not_confused() {
         let text = "[models]\ndeep_effort = \"low\"\ndeep = \"x\"\n";
         let out = set_in(text, "models", "deep", Some(&Value::Str("y".into())));

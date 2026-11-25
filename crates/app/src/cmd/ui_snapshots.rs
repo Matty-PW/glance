@@ -82,6 +82,7 @@ impl SettingsBackend for DemoSettings {
             deep_idle_mins: d.models.deep_idle_secs / 60,
             hotkeys: [d.hotkeys.talk, d.hotkeys.look, d.hotkeys.think],
             accent: d.appearance.accent,
+            screenshot_indicator: d.appearance.screenshot_indicator,
         }
     }
 

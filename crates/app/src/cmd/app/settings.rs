@@ -87,6 +87,7 @@ fn values_of(config: &Config) -> SettingsValues {
             config.hotkeys.think.clone(),
         ],
         accent: config.appearance.accent.clone(),
+        screenshot_indicator: config.appearance.screenshot_indicator.clone(),
     }
 }
 
@@ -189,6 +190,11 @@ impl AppSettings {
             }
             SettingsChange::Accent(accent) => {
                 self.save(&[("appearance", "accent", str_value(&accent))])?;
+                Ok(Applied::Live)
+            }
+            SettingsChange::ScreenshotIndicator(indicator) => {
+                // The strict parser checks the value before the file changes.
+                self.save(&[("appearance", "screenshot_indicator", str_value(&indicator))])?;
                 Ok(Applied::Live)
             }
             SettingsChange::Hotkeys([talk, look, think]) => {
