@@ -339,11 +339,15 @@ fn new_session() {
 
 /// `--overlay-demo`: scripted turns with fixed text, through the real shell,
 /// cycling Listening (with a made-up mic level), Thinking and Speaking,
-/// twice: a short answer, then a "think harder" one with a longer answer.
+/// twice: a short answer on a new screenshot (the indicator plays on the
+/// main display, with the current setting), then a "think harder" one with
+/// a longer answer on the same screenshot (no indicator; the overlay says
+/// how old it is). Then a tour of the indicator's looks, whatever the
+/// setting, each named in the overlay.
 async fn overlay_demo(shell: Arc<dyn Shell>) {
-    use glance_orchestrator::{Progress, Shown};
+    use glance_orchestrator::{Progress, ScreenshotUse, Shown};
     use std::sync::atomic::Ordering;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     let pause = |ms| tokio::time::sleep(Duration::from_millis(ms));
     let rounds: [(&str, Option<Progress>, &[&str]); 2] = [
         (
@@ -366,11 +370,23 @@ async fn overlay_demo(shell: Arc<dyn Shell>) {
         ),
     ];
     pause(1500).await;
+    let mut taken = None;
     for (question, progress, sentences) in rounds {
         shell.display(&Shown::Clear);
         DEMO_RUNNING.store(true, Ordering::Relaxed);
         shell.update(&Update::State(TurnState::Listening));
-        pause(2500).await;
+        // The first round takes a screenshot (a capture takes ~50 ms); the
+        // think-harder round reuses it.
+        pause(60).await;
+        let used = match taken {
+            None => {
+                taken = Some(Instant::now());
+                ScreenshotUse::Fresh { display: None }
+            }
+            Some(taken) => ScreenshotUse::Reused { taken },
+        };
+        shell.update(&Update::Screenshot(used));
+        pause(2440).await;
         DEMO_RUNNING.store(false, Ordering::Relaxed);
         shell.update(&Update::State(TurnState::Transcribing));
         pause(400).await;
@@ -390,6 +406,16 @@ async fn overlay_demo(shell: Arc<dyn Shell>) {
         // so both rounds can be compared.
         pause(3000).await;
     }
+    // The indicator's looks, one after another, named in the overlay.
+    shell.display(&Shown::Clear);
+    shell.update(&Update::State(TurnState::Speaking));
+    for (caption, look) in glance_macos::glow::demo_looks() {
+        shell.display(&Shown::Clear);
+        shell.display(&Shown::Said(format!("Screenshot indicator: {caption}")));
+        glance_macos::glow::preview(None, look);
+        pause(1500).await;
+    }
+    shell.update(&Update::State(TurnState::Idle));
 }
 
 /// Orchestrator updates to the shell, plus the per-turn log line.

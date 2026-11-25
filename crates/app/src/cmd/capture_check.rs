@@ -88,7 +88,6 @@ fn indicator_check(screen: &LiveScreen) -> Result<()> {
     match check.verdict() {
         Verdict::Pass => {
             println!("PASS: the glow was on screen and is not in glance's capture");
-            Ok(())
         }
         Verdict::Fail => bail!(
             "FAIL: glance's capture changed at the edges while the glow was up (if the screen \
@@ -99,4 +98,23 @@ fn indicator_check(screen: &LiveScreen) -> Result<()> {
              (try again with the display showing something other than the accent colour)"
         ),
     }
+
+    // Then one real, animated flash: it must show and then leave the screen.
+    let flash = glow::flash_check(screen, EDGE_BAND).map_err(anyhow::Error::msg)?;
+    println!("one animated flash (control captures, glance's windows left in):");
+    println!(
+        "  0.12 s in:  {:>6.2}   must be over {}",
+        flash.during,
+        glow::SEEN
+    );
+    println!(
+        "  1.1 s in:   {:>6.2}   must be under {}",
+        flash.after,
+        glow::UNCHANGED
+    );
+    if !flash.played_and_left() {
+        bail!("FAIL: the flash did not show, or did not leave the screen");
+    }
+    println!("PASS: the flash showed and then left the screen");
+    Ok(())
 }

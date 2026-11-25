@@ -1,5 +1,6 @@
-//! `glance ui-snapshots`: draw glance's own windows (overlay states and
-//! settings pages, light and dark, with fixed demo text) into PNG files,
+//! `glance ui-snapshots`: draw glance's own windows (overlay states, the
+//! screenshot indicator's looks and settings pages, light and dark, with
+//! fixed demo text) into PNG files,
 //! to review the layout. It renders views in-process; it never captures the
 //! screen, and nothing from other apps can appear in the images. Visual
 //! effect views (blur) are not drawn this way, so the overlay is shown with
@@ -66,34 +67,81 @@ pub fn overlay(out: &Path) -> Result<Vec<PathBuf>, String> {
     ]
     .join(" ")
     .repeat(3);
-    let states: [(&str, TurnState, Option<Progress>, &str, &str); 7] = [
-        ("ready", TurnState::Idle, None, QUESTION, SHORT),
-        ("listening", TurnState::Listening, None, "", ""),
-        ("transcribing", TurnState::Transcribing, None, "", ""),
-        ("thinking", TurnState::Thinking, None, QUESTION, ""),
+    // A new screenshot, or (a follow-up, think harder) one from 42 s ago.
+    let new = Some(ScreenshotUse::Fresh { display: None });
+    let reused = Some(ScreenshotUse::Reused {
+        taken: std::time::Instant::now() - std::time::Duration::from_secs(42),
+    });
+    type State<'a> = (
+        &'a str,
+        TurnState,
+        Option<Progress>,
+        &'a str,
+        &'a str,
+        Option<ScreenshotUse>,
+    );
+    let states: [State; 8] = [
+        ("ready", TurnState::Idle, None, QUESTION, SHORT, new),
+        ("listening", TurnState::Listening, None, "", "", new),
+        ("transcribing", TurnState::Transcribing, None, "", "", new),
+        ("thinking", TurnState::Thinking, None, QUESTION, "", new),
         (
             "thinking-harder",
             TurnState::Thinking,
             Some(Progress::ThinkingHarder),
             QUESTION,
             "",
+            reused,
         ),
-        ("speaking", TurnState::Speaking, None, QUESTION, SHORT),
-        ("speaking-long", TurnState::Speaking, None, QUESTION, &long),
+        ("speaking", TurnState::Speaking, None, QUESTION, SHORT, new),
+        (
+            "speaking-reused-shot",
+            TurnState::Speaking,
+            None,
+            QUESTION,
+            SHORT,
+            reused,
+        ),
+        (
+            "speaking-long",
+            TurnState::Speaking,
+            None,
+            QUESTION,
+            &long,
+            new,
+        ),
     ];
     let mut written = Vec::new();
     for dark in [false, true] {
-        for (name, state, progress, question, reply) in states {
+        for (name, state, progress, question, reply, shot) in states {
             let levels = [0.01, 0.04, 0.08, 0.05, 0.02];
-            // As in a follow-up: the line says how old the screenshot is.
-            let shot = (state != TurnState::Listening).then(|| ScreenshotUse::Reused {
-                taken: std::time::Instant::now() - std::time::Duration::from_secs(42),
-            });
             let (_panel, view) =
                 crate::overlay::stage(state, progress, question, reply, shot, levels, dark)
                     .ok_or("overlay not installed")?;
             let mode = if dark { "dark" } else { "light" };
             let path = out.join(format!("overlay-{name}-{mode}.png"));
+            save_view(&view, &path)?;
+            written.push(path);
+        }
+    }
+    Ok(written)
+}
+
+/// Render each screenshot-indicator look at full strength, light and dark,
+/// on a plain backdrop, into `out`. Main thread.
+pub fn glow(out: &Path) -> Result<Vec<PathBuf>, String> {
+    let mtm = MainThreadMarker::new().ok_or("must run on the main thread")?;
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    let size = objc2_foundation::NSSize::new(900.0, 560.0);
+    let mut written = Vec::new();
+    for dark in [false, true] {
+        for (caption, look) in crate::glow::demo_looks() {
+            let view = crate::glow::stage(look, size, dark).ok_or("no main thread")?;
+            let mode = if dark { "dark" } else { "light" };
+            let name = caption.to_lowercase().replace(' ', "-");
+            let path = out.join(format!("glow-{name}-{mode}.png"));
             save_view(&view, &path)?;
             written.push(path);
         }

@@ -1,5 +1,6 @@
-//! `glance ui-snapshots`: glance's own windows drawn to PNGs (overlay states
-//! and settings pages, light and dark, fixed demo text), to review layout.
+//! `glance ui-snapshots`: glance's own windows drawn to PNGs (overlay states,
+//! the screenshot indicator's looks and settings pages, light and dark,
+//! fixed demo text), to review layout.
 //! Development only. It never captures the screen.
 
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ pub fn run(args: Args) -> Result<()> {
         args.out.display()
     );
     let mut written = glance_macos::snapshot::overlay(&args.out).map_err(anyhow::Error::msg)?;
+    written.extend(glance_macos::snapshot::glow(&args.out).map_err(anyhow::Error::msg)?);
     written.extend(
         glance_macos::snapshot::settings(&args.out, Arc::new(DemoSettings), Arc::new(DemoModels))
             .map_err(anyhow::Error::msg)?,

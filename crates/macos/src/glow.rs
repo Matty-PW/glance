@@ -304,9 +304,35 @@ pub fn flash(display: Option<u32>) {
     }
 }
 
-/// Flash `look` whatever the setting (Settings' preview, the demo).
+/// Flash `look` whatever the setting (`--overlay-demo`). Any thread: it
+/// runs on the main queue.
 pub fn preview(display: Option<u32>, look: Look) {
-    play(display, look);
+    DispatchQueue::main().exec_async(move || play(display, look));
+}
+
+/// `glance ui-snapshots`: `look` at full strength in a view of `size` over
+/// a plain window background (no panel on screen, no screen capture), to
+/// be drawn into an image.
+pub(crate) fn stage(look: Look, size: NSSize, dark: bool) -> Option<Retained<NSView>> {
+    use objc2_app_kit::{NSAppearanceCustomization, NSBox, NSBoxType, NSTitlePosition};
+    let mtm = MainThreadMarker::new()?;
+    let backdrop = NSBox::new(mtm);
+    backdrop.setBoxType(NSBoxType::Custom);
+    backdrop.setTitlePosition(NSTitlePosition::NoTitle);
+    backdrop.setBorderWidth(0.0);
+    backdrop.setCornerRadius(0.0);
+    backdrop.setFillColor(&NSColor::windowBackgroundColor());
+    backdrop.setContentViewMargins(NSSize::new(0.0, 0.0));
+    backdrop.setFrame(NSRect::new(NSPoint::new(0.0, 0.0), size));
+    backdrop.setAppearance(crate::snapshot::appearance(dark).as_deref());
+    let depth = look.band.max(look.line);
+    for (edge, rect) in EDGES.into_iter().zip(edge_frames(size, depth)) {
+        let view = EdgeView::new(mtm, edge);
+        view.set_look(look);
+        view.setFrame(rect);
+        backdrop.addSubview(&view);
+    }
+    Some(Retained::into_super(backdrop))
 }
 
 /// Show `look` at full strength and keep it there, with no animation,
@@ -567,6 +593,59 @@ pub fn exclusion_check(
     })
 }
 
+/// Edge differences from a capture with no glow, taken with glance's
+/// windows left in, during and after one real (animated) flash.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlashCheck {
+    /// Shortly after the flash starts.
+    pub during: f64,
+    /// A second later: the fade should be over and the panel gone.
+    pub after: f64,
+}
+
+impl FlashCheck {
+    /// The flash showed, and then left the screen entirely.
+    pub fn played_and_left(&self) -> bool {
+        self.during > SEEN && self.after < UNCHANGED
+    }
+}
+
+/// Play one animated Glow flash on the active display and check, with
+/// control captures, that it shows and then leaves the screen (the Core
+/// Animation fade ran to its end and the panel was ordered out). Main
+/// thread; numbers only.
+pub fn flash_check(screen: &crate::capture::LiveScreen, band: u32) -> Result<FlashCheck, String> {
+    use glance_capture::ScreenCapture;
+    use objc2_foundation::{NSDate, NSRunLoop};
+
+    let settle = |seconds: f64| {
+        NSRunLoop::currentRunLoop().runUntilDate(&NSDate::dateWithTimeIntervalSinceNow(seconds));
+    };
+    let fail = |e: glance_capture::CaptureError| e.to_string();
+    let baseline = screen.capture().map_err(fail)?;
+    let display = baseline
+        .display()
+        .ok_or("the capture did not name its display")?;
+    play(
+        Some(display),
+        look(Indicator::Glow, false, false).expect("glow"),
+    );
+    // Rise 0.08 s, then the fade: 0.12 s in, it is near full strength.
+    settle(0.12);
+    let during = screen.capture_including_glance_for_check(display);
+    settle(1.0);
+    let after = screen.capture_including_glance_for_check(display);
+    let differ = |shot: glance_capture::Screenshot| {
+        baseline
+            .edge_difference(&shot, band)
+            .ok_or_else(|| "captures differ in size".to_owned())
+    };
+    Ok(FlashCheck {
+        during: differ(during.map_err(fail)?)?,
+        after: differ(after.map_err(fail)?)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -580,6 +659,14 @@ mod tests {
         // The control saw nothing: the run says nothing either way.
         assert_eq!(check(0.0, 0.3), Verdict::Inconclusive);
         assert_eq!(check(40.0, 2.0), Verdict::Inconclusive);
+    }
+
+    #[test]
+    fn a_flash_must_show_and_then_leave() {
+        let flash = |during, after| FlashCheck { during, after }.played_and_left();
+        assert!(flash(45.0, 0.1));
+        assert!(!flash(45.0, 20.0)); // still on screen
+        assert!(!flash(0.5, 0.1)); // never showed
     }
 
     #[test]
