@@ -95,7 +95,7 @@ impl Shell for MacShell {
                 Update::Progress(progress) => Some(OverlayEvent::Progress(*progress)),
                 Update::Deep(status) => Some(OverlayEvent::Deep(*status)),
                 Update::Session(info) => Some(OverlayEvent::Session(*info)),
-                Update::Report(_) => None,
+                Update::Report(_) | Update::Screenshot(_) => None,
             };
             if let Some(event) = event {
                 DispatchQueue::main().exec_async(move || overlay::apply(event));
@@ -111,6 +111,8 @@ impl Shell for MacShell {
             Update::Progress(progress) => show(View::progress(*progress)),
             Update::Deep(status) => show(View::deep(*status)),
             Update::Session(info) => show(View::session(*info)),
+            // The tray's session line already shows the screenshot's age.
+            Update::Screenshot(_) => {}
         }
     }
 

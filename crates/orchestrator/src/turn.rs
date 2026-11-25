@@ -26,8 +26,8 @@ use crate::length::{CONTINUE_PROMPT, ends_sentence, is_more};
 use crate::session::{Commit, Shot, Tier};
 use crate::workers::{MicWorker, Reply, SttWorker};
 use crate::{
-    Chord, DeepStatus, DeepTier, Outcome, Parts, Progress, Shown, TurnConfig, TurnError,
-    TurnReport, TurnState, Update,
+    Chord, DeepStatus, DeepTier, Outcome, Parts, Progress, ScreenshotUse, Shown, TurnConfig,
+    TurnError, TurnReport, TurnState, Update,
 };
 
 /// Spoken when a "think harder" turn starts; local text only.
@@ -286,20 +286,27 @@ pub(crate) async fn prepare(
     let max_edge = shared.config.max_edge;
     // DEEP gets its own, larger copy (one capture, two encodes).
     let deep_edge = shared.deep.is_some().then_some(shared.config.deep_max_edge);
-    let (png, deep_png, capture_time, encode_time) =
+    let (shot, capture_time) = tokio::task::spawn_blocking(move || -> Result<_, CaptureError> {
+        let started = Instant::now();
+        let shot = capture.capture()?;
+        Ok((shot, started.elapsed()))
+    })
+    .await
+    .map_err(|_| TurnError::WorkerGone)??;
+    // The capture has returned: the screenshot indicator may show now and
+    // can never be in this image. Sent from here, not the blocking task, so
+    // a turn cancelled during the capture sends nothing.
+    let _ = shared
+        .updates
+        .send(Update::Screenshot(ScreenshotUse::Fresh {
+            display: shot.display(),
+        }));
+    let (png, deep_png, encode_time) =
         tokio::task::spawn_blocking(move || -> Result<_, CaptureError> {
-            let started = Instant::now();
-            let shot = capture.capture()?;
-            let capture_time = started.elapsed();
             let started = Instant::now();
             let image = shot.encode(max_edge)?;
             let deep = deep_edge.map(|edge| shot.encode(edge)).transpose()?;
-            Ok((
-                image.png(),
-                deep.map(|d| d.png()),
-                capture_time,
-                started.elapsed(),
-            ))
+            Ok((image.png(), deep.map(|d| d.png()), started.elapsed()))
         })
         .await
         .map_err(|_| TurnError::WorkerGone)??;

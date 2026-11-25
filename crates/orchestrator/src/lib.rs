@@ -193,6 +193,22 @@ pub enum Update {
     Progress(Progress),
     /// DEEP was loaded or unloaded.
     Deep(DeepStatus),
+    /// Which screenshot the current turn uses (no content), at most once
+    /// per turn, after `State(Listening)`.
+    Screenshot(ScreenshotUse),
+}
+
+/// Which screenshot a turn uses, for the screenshot indicator and the
+/// overlay's screenshot line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenshotUse {
+    /// A new screenshot was taken for this turn. Sent only once the capture
+    /// has returned, so anything shown in response can never be in that
+    /// image. `display` is the platform display id, when known.
+    Fresh { display: Option<u32> },
+    /// The session's screenshot, taken at `taken` (a follow-up or a
+    /// "think harder" on the same screen).
+    Reused { taken: std::time::Instant },
 }
 
 /// Text for the overlay, and nothing else: what the user asked and each
@@ -560,6 +576,14 @@ impl Orchestrator {
         } else {
             (Vec::new(), None)
         };
+        // Listening goes out before the capture starts, so the screenshot
+        // update below (or `Fresh` from `prepare`) always follows it.
+        self.state(TurnState::Listening);
+        if !capture && let Some(taken) = self.session.info().screenshot_taken {
+            let _ = self
+                .updates
+                .send(Update::Screenshot(ScreenshotUse::Reused { taken }));
+        }
         let prepare = turn::AbortOnDrop(tokio::spawn(turn::prepare(
             Arc::clone(&self.shared),
             history.clone(),
@@ -575,7 +599,6 @@ impl Orchestrator {
             tokio::spawn(turn::warm_deep(Arc::clone(&self.shared), prefix));
         }
         let last_deep = self.session.last_was_deep();
-        self.state(TurnState::Listening);
         Phase::Listening(Listening {
             last_deep,
             turn,

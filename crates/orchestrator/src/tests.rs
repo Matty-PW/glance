@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     Chord, Controller, DeepStatus, DeepTier, HotkeyEvent, LoadFuture, Orchestrator, Outcome, Parts,
-    Progress, SessionInfo, TurnConfig, TurnError, TurnReport, TurnState, Update,
+    Progress, ScreenshotUse, SessionInfo, TurnConfig, TurnError, TurnReport, TurnState, Update,
 };
 
 // ---- mocks -----------------------------------------------------------------
@@ -28,12 +28,17 @@ struct MockCapture {
 }
 
 impl ScreenCapture for MockCapture {
-    /// Every capture has different pixels, so requests can tell them apart.
+    /// Every capture has different pixels, so requests can tell them apart,
+    /// and names display `100 + n`, so an update can name the capture it
+    /// came from (and so must have been made after it returned).
     fn capture(&self) -> Result<Screenshot, CaptureError> {
         let n = self.count.fetch_add(1, Ordering::SeqCst) + 1;
         match self.fail {
             Some(error) => Err(error()),
-            None => Screenshot::from_rgba(4, 4, vec![(n * 10) as u8; 4 * 4 * 4]),
+            None => Ok(
+                Screenshot::from_rgba(4, 4, vec![(n * 10) as u8; 4 * 4 * 4])?
+                    .with_display(100 + n as u32),
+            ),
         }
     }
 }
@@ -500,6 +505,29 @@ fn sessions(updates: &[Update]) -> Vec<SessionInfo> {
         .collect()
 }
 
+fn screenshot_uses(updates: &[Update]) -> Vec<ScreenshotUse> {
+    updates
+        .iter()
+        .filter_map(|u| match u {
+            Update::Screenshot(used) => Some(*used),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Where the first `Listening` and the first screenshot update are.
+fn listening_then_screenshot(updates: &[Update]) -> (usize, usize) {
+    let listening = updates
+        .iter()
+        .position(|u| matches!(u, Update::State(TurnState::Listening)))
+        .expect("no Listening");
+    let shot = updates
+        .iter()
+        .position(|u| matches!(u, Update::Screenshot(_)))
+        .expect("no screenshot update");
+    (listening, shot)
+}
+
 fn reports(updates: &[Update]) -> Vec<TurnReport> {
     updates
         .iter()
@@ -701,6 +729,60 @@ async fn a_denied_screen_capture_points_at_the_permission() {
     assert_eq!(error, TurnError::ScreenPermission);
     assert!(h.requests.lock().unwrap().is_empty());
     assert!(h.spoken()[0].contains("Screen Recording"));
+}
+
+// ---- screenshot indicator ---------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_new_screenshot_is_announced_after_listening_and_names_its_display() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2"],
+        ..Default::default()
+    });
+    let first = h.ask(Chord::Talk).await;
+    // Display 101 is what the first capture returned: the update was made
+    // from the finished capture.
+    assert_eq!(
+        screenshot_uses(&first),
+        [ScreenshotUse::Fresh { display: Some(101) }]
+    );
+    let (listening, shot) = listening_then_screenshot(&first);
+    assert!(listening < shot);
+
+    let second = h.ask(Chord::Look).await;
+    assert_eq!(
+        screenshot_uses(&second),
+        [ScreenshotUse::Fresh { display: Some(102) }]
+    );
+    assert_eq!(h.captures(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_follow_up_says_which_earlier_screenshot_it_uses_and_never_fresh() {
+    let mut h = Harness::new(Setup {
+        transcripts: vec!["q1", "q2"],
+        ..Default::default()
+    });
+    let first = h.ask(Chord::Talk).await;
+    let taken = sessions(&first).last().unwrap().screenshot_taken.unwrap();
+    let second = h.ask(Chord::Talk).await;
+    assert_eq!(screenshot_uses(&second), [ScreenshotUse::Reused { taken }]);
+    let (listening, shot) = listening_then_screenshot(&second);
+    assert!(listening < shot);
+    assert_eq!(h.captures(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_capture_announces_no_screenshot() {
+    let mut h = Harness::new(Setup {
+        capture_fails: Some(|| CaptureError::PermissionDenied),
+        ..Default::default()
+    });
+    let updates = h.ask(Chord::Look).await;
+    assert_eq!(h.captures(), 1);
+    assert!(screenshot_uses(&updates).is_empty());
+    let [report] = reports(&updates).try_into().unwrap();
+    assert_eq!(report.outcome, Outcome::Failed(TurnError::ScreenPermission));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1078,7 +1160,7 @@ async fn a_think_tap_re_asks_the_last_question_with_deep_loading_it_first() {
     // Loading starts at the press and is still going when the turn asks.
     setup.deep_load_delay = Duration::from_millis(300);
     let mut h = Harness::new(setup);
-    h.ask(Chord::Talk).await;
+    let first = h.ask(Chord::Talk).await;
     h.hold(Chord::Think, 20).await; // a tap
     let updates = h.until_idle().await;
 
@@ -1091,6 +1173,10 @@ async fn a_think_tap_re_asks_the_last_question_with_deep_loading_it_first() {
             DEEP_SAYS
         ]
     );
+    // The re-ask uses the first turn's screenshot: no new one, no glow.
+    let taken = sessions(&first).last().unwrap().screenshot_taken.unwrap();
+    assert_eq!(screenshot_uses(&updates), [ScreenshotUse::Reused { taken }]);
+    assert_eq!(h.captures(), 1);
     // DEEP gets the original question and screenshot, not FAST's answer.
     assert_eq!(
         deep_questions(&h)[0].layout,
