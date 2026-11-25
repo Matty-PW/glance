@@ -39,7 +39,7 @@ use objc2_app_kit::{
     NSBackingStoreType, NSBox, NSBoxType, NSColor, NSFont, NSLineBreakMode, NSPanel, NSScreen,
     NSScrollView, NSStatusWindowLevel, NSTextField, NSTitlePosition, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
@@ -355,18 +355,10 @@ pub(crate) fn stage(
     })
 }
 
-fn reduce_motion() -> bool {
-    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
-}
-
-fn reduce_transparency() -> bool {
-    NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceTransparency()
-}
-
 impl Overlay {
     fn show(&mut self) {
-        self.reduce_motion = reduce_motion();
-        let solid = reduce_transparency();
+        self.reduce_motion = crate::theme::reduce_motion();
+        let solid = crate::theme::reduce_transparency();
         self.solid.setHidden(!solid);
         self.blur.setHidden(solid);
         if !self.visible {

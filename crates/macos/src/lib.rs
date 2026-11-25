@@ -8,6 +8,7 @@
 //! - [`hotkeys`]: the chords as Carbon hotkeys (no Input Monitoring).
 //! - [`shell`]: the app (NSApplication run loop, menu-bar icon, overlay,
 //!   settings window), the orchestrator's `Shell`.
+//! - [`glow`]: the screenshot indicator, a glow around the captured display.
 //! - [`theme`]: the accent colour and spacing, the only colour values here.
 //! - [`snapshot`]: `glance ui-snapshots`, glance's own windows drawn to PNGs.
 //! - [`bundle`]: assembling and signing `Glance.app` (used by `cargo xtask`).
@@ -17,6 +18,7 @@
 
 pub mod bundle;
 pub mod capture;
+pub mod glow;
 pub mod hotkeys;
 mod overlay;
 pub mod permission;

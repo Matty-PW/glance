@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use dispatch2::DispatchQueue;
 use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
-use glance_orchestrator::{HotkeyEvent, Outcome, Shell, Shown, Update};
+use glance_orchestrator::{HotkeyEvent, Outcome, ScreenshotUse, Shell, Shown, Update};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -89,6 +89,11 @@ impl Shell for MacShell {
     }
 
     fn update(&self, update: &Update) {
+        // The indicator is its own setting, with or without the overlay.
+        if let Update::Screenshot(ScreenshotUse::Fresh { display }) = update {
+            let display = *display;
+            DispatchQueue::main().exec_async(move || crate::glow::flash(display));
+        }
         if self.overlay {
             let event = match update {
                 Update::State(state) => Some(OverlayEvent::State(*state)),
@@ -140,7 +145,9 @@ pub fn run(
         on_new_session: options.on_new_session,
     });
     if let Some(settings) = options.settings {
-        crate::theme::set_system_accent(settings.current().0.accent == "system");
+        let values = settings.current().0;
+        crate::theme::set_system_accent(values.accent == "system");
+        crate::glow::set_indicator(&values.screenshot_indicator);
         let _ = SETTINGS.set(settings);
     }
     if let Some(level) = options.mic_level {

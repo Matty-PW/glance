@@ -46,6 +46,16 @@ pub fn uses_system_accent() -> bool {
     SYSTEM_ACCENT.load(Ordering::Relaxed)
 }
 
+/// System Settings > Accessibility > Display > Reduce motion.
+pub(crate) fn reduce_motion() -> bool {
+    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
+/// System Settings > Accessibility > Display > Reduce transparency.
+pub(crate) fn reduce_transparency() -> bool {
+    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceTransparency()
+}
+
 fn srgb(rgb: u32) -> Retained<NSColor> {
     let channel = |shift: u32| f64::from((rgb >> shift) & 0xFF) / 255.0;
     NSColor::colorWithSRGBRed_green_blue_alpha(channel(16), channel(8), channel(0), 1.0)
