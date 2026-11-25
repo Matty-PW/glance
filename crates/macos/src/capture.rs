@@ -90,7 +90,7 @@ impl ScreenCapture for LiveScreen {
         let image = SCScreenshotManager::capture_image(&filter, &config).map_err(|e| failed(&e))?;
         let (w, h) = (image.width() as u32, image.height() as u32);
         let pixels = image.rgba_data().map_err(|e| failed(&e))?;
-        Screenshot::from_rgba(w, h, pixels)
+        Ok(Screenshot::from_rgba(w, h, pixels)?.with_display(display_frames[index].0))
     }
 }
 

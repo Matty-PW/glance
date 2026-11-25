@@ -49,6 +49,9 @@ pub trait ScreenCapture: Send + Sync {
 /// A decoded screenshot, in memory only.
 pub struct Screenshot {
     image: DynamicImage,
+    /// The display it came from, as an opaque platform id (a
+    /// `CGDirectDisplayID` on macOS); `None` for files.
+    display: Option<u32>,
 }
 
 impl fmt::Debug for Screenshot {
@@ -61,7 +64,10 @@ impl Screenshot {
     pub fn from_png(bytes: &[u8]) -> Result<Self, CaptureError> {
         let image = image::load_from_memory_with_format(bytes, ImageFormat::Png)
             .map_err(CaptureError::Decode)?;
-        Ok(Self { image })
+        Ok(Self {
+            image,
+            display: None,
+        })
     }
 
     /// Wrap tightly packed RGBA pixels (4 bytes per pixel, no row padding).
@@ -71,7 +77,20 @@ impl Screenshot {
         })?;
         Ok(Self {
             image: DynamicImage::ImageRgba8(image),
+            display: None,
         })
+    }
+
+    /// Record which display this screenshot shows (an opaque platform id).
+    pub fn with_display(mut self, display: u32) -> Self {
+        self.display = Some(display);
+        self
+    }
+
+    /// The display it shows, if known. Used only to point at that display
+    /// (the screenshot indicator); never sent anywhere.
+    pub fn display(&self) -> Option<u32> {
+        self.display
     }
 
     pub fn width(&self) -> u32 {
@@ -236,6 +255,16 @@ mod tests {
         let shot = Screenshot::from_rgba(4, 2, vec![200; 4 * 2 * 4]).unwrap();
         assert_eq!((shot.width(), shot.height()), (4, 2));
         assert!(Screenshot::from_rgba(4, 2, vec![0; 10]).is_err());
+    }
+
+    #[test]
+    fn display_id_is_kept_and_not_shown() {
+        let shot = Screenshot::from_rgba(4, 2, vec![200; 4 * 2 * 4]).unwrap();
+        assert_eq!(shot.display(), None);
+        let shot = shot.with_display(69_733_632);
+        assert_eq!(shot.display(), Some(69_733_632));
+        assert_eq!(format!("{shot:?}"), "Screenshot(4x2)");
+        assert_eq!(Screenshot::from_png(&png(8, 8)).unwrap().display(), None);
     }
 
     #[test]
