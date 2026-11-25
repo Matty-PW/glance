@@ -1,6 +1,6 @@
 # glance — progress
 
-Snapshot as of 2026-11-22; the design is in `docs/DESIGN.md`. Numbers are from
+Snapshot as of 2026-11-25; the design is in `docs/DESIGN.md`. Numbers are from
 the Apple Silicon reference machine, with synthetic inputs unless noted.
 
 ## Milestone status
@@ -15,7 +15,7 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M2: hotkey, live capture, `.app`, permissions | **Code done; acceptance needs the maintainer** (see "Next step") |
 | M3: follow-ups, `look` vs `talk`, session expiry | **Code done; needs a spoken run through the app** |
 | M4: escalation, managed llama-server pair, DEEP bake-off | **Code done.** DEEP chosen (Qwen3.8-27B, pinned) and measured; FAST-only default, think harder on demand |
-| M5: overlay, settings, model management | **Code done.** Overlay, settings window, models page, personality, visual redesign; hands-on checks next |
+| M5: overlay, settings, model management | **Code done.** Overlay, settings window, models page, personality, visual redesign, screenshot indicator; hands-on checks next |
 | Public release preparation | **Ready, not public.** Licence chosen, log gaps fixed; the rest is the maintainer's checklist (see below) |
 
 ## Public release preparation (2026-11-22)
@@ -230,8 +230,53 @@ Done:
   Reduce Motion / Reduce Transparency, hotkey change and Restore defaults
   from the new window.
 
-Left: check the redesign by hand; rebuild the bundle and run the M2/M3
-hands-on checks with the maintainer.
+- Screenshot indicator (2026-11-25; plan approved by the maintainer;
+  visual and UX only, no capture, model, hotkey or existing-config change):
+  - `crates/macos/src/glow.rs`: on a new screenshot, a ~0.5 s accent glow
+    around the edge of the display that was captured (its
+    `CGDirectDisplayID` travels on `Screenshot`; unknown means the main
+    screen). The panel is the overlay's kind (non-activating, click-through,
+    every Space, over full-screen apps). Four thin edge views are drawn
+    once; the fade is a Core Animation opacity animation (`NSAnimationContext`
+    and the animator), no per-frame work, and the panel is off screen
+    between flashes. The fade uses the default (linear) timing: setting a
+    curve needs `objc2-quartz-core`, which was not added.
+  - `[appearance] screenshot_indicator` = glow (default) | subtle (a thin
+    line) | off; Settings > Appearance > Screenshot indicator, live, with a
+    preview on the window's display. It works with the overlay on or off.
+    Reduce Motion: a still line, held 0.5 s, one plain fade. Reduce
+    Transparency: an opaque line, no translucent band.
+  - Orchestrator: `Update::Screenshot` (no content). `Fresh` is sent from
+    `prepare` once the capture has returned and before encoding, so the glow
+    can never be in that image and a turn cancelled during the capture sends
+    nothing. `Reused { taken }` is sent at the press of a follow-up or
+    think-harder. `State(Listening)` now goes out before the capture starts,
+    so the screenshot update always follows it.
+  - Overlay: a quiet line under the status reads "New screenshot taken" or
+    "Using screenshot from 12 s ago" (fixed at the press); it replaces the
+    meta text's "screenshot N s old", which followed the session.
+  - Proof it is not in the image: orchestrator tests (`Fresh` names the
+    display of the capture that returned, comes after Listening, never on a
+    follow-up, think-harder or failed capture), and `glance capture-check
+    --indicator`. That holds the glow on screen and compares the outer 24 px
+    with a capture taken without it: glance's capture must be unchanged
+    (< 1.5 of 255) while a control capture with glance's windows left in must
+    see it (> 10). It then plays one animated flash, which must show at
+    0.12 s and be gone by 1.1 s. From a terminal (2026-11-25, three runs):
+    excluded 0.00–0.02, control 48.0–51.6; flash 35.4–36.9 during,
+    0.00–0.02 after. All PASS. Numbers only; no pixels kept.
+  - `--overlay-demo`: the first round glows ("New screenshot taken"), the
+    think-harder round does not ("Using screenshot from 13 s ago"), then a
+    tour of the four looks. `ui-snapshots`: `glow-*.png` and an
+    `overlay-speaking-reused-shot` state.
+  - Not yet checked by hand: the demo itself; `capture-check --indicator`
+    inside the signed bundle; a real chord press; the glow over a
+    full-screen app and on another Space; the right display with two
+    monitors; Reduce Motion and Reduce Transparency switched on; a live
+    switch in Settings; focus and clicks unaffected during a glow.
+
+Left: check the redesign and the screenshot indicator by hand; rebuild the
+bundle and run the M2/M3 hands-on checks with the maintainer.
 
 ## M4 (in progress)
 
@@ -506,6 +551,8 @@ glance say --voice af_heart:0.6,bm_george:0.4 "A blend."
 glance say --engine system --voice en-GB "The system voice."
 glance tts-bench --out eval-local/kokoro-bench # Kokoro models vs system voice
 glance capture-check                         # live capture: sizes and timings only
+glance capture-check --indicator             # the glow is never in a capture (numbers only)
+glance app --overlay-demo                    # scripted turns + the indicator's looks
 export GLANCE_SIGN_IDENTITY=<SHA-1 from: security find-identity -v -p codesigning>
 cargo xtask bundle                           # signed target/bundle/Glance.app
 open -W --stderr "$(tty)" target/bundle/Glance.app --args app \
@@ -517,7 +564,7 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 126 tests
+cargo test --workspace --locked              # 221 tests
 cargo audit
 cargo deny check                             # passes; one ignore, one exception
 ```
@@ -527,7 +574,9 @@ Eval screens and Kokoro spike: `README.md`, `spikes/README.md`.
 
 The M2/M3 steps below, plus the M5 windows (overlay states over light and
 dark apps, Reduce Motion and Reduce Transparency, settings changes, think
-harder), then the public-release decisions above.
+harder), the screenshot indicator (its "Not yet checked by hand" list in M5,
+starting with `open -W --stderr "$(tty)" target/bundle/Glance.app --args
+capture-check --indicator`), then the public-release decisions above.
 
 Built: the orchestrator turn loop and sessions (`crates/orchestrator`),
 `glance app` (`crates/app/src/cmd/app/`), permission helpers, `cargo xtask

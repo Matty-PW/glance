@@ -121,6 +121,7 @@ Personality, Think harder, Models, Hotkeys, Appearance, About), or edit
 | `models.personality` | `neutral` | Also `friendly`, `direct`, `strict`, `pirate`, `caveman`, `shakespearean`, `custom` |
 | `models.auto_escalate` | `false` | Let FAST hand hard questions to DEEP by itself |
 | `appearance.accent` | `glance` | Accent colour: glance's coral or the macOS accent (`system`) |
+| `appearance.screenshot_indicator` | `glow` | On a new screenshot: a short `glow` around the edge of the captured display, `subtle` (a thin line) or `off`. The overlay also says "New screenshot taken" or "Using screenshot from 12 s ago". Never in the image sent to the model |
 | `hotkeys.talk` / `look` / `think` | `Ctrl+Opt+G` / `Ctrl+Opt+Shift+G` / `Ctrl+Opt+T` | The three chords |
 
 An invalid file is reported with the problem named; glance never silently

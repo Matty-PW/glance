@@ -152,7 +152,18 @@ switching.
   the previous image is replaced in history by a short text placeholder.
 - A session ends from the tray ("New session") or after 10 idle minutes. History
   and screenshot live in memory only and are gone at quit.
-- The overlay shows the screenshot's age, so a stale capture is visible.
+- Each turn says which screenshot it uses (`Update::Screenshot`, no content):
+  `Fresh` once the capture has returned, `Reused` (with the shot's time) at the
+  press of a follow-up or think-harder. The overlay shows "New screenshot taken"
+  or "Using screenshot from 12 s ago", so a stale capture is visible.
+- Screenshot indicator (`[appearance] screenshot_indicator`, glow / subtle /
+  off, live): on `Fresh`, a ~0.5 s accent glow around the edge of the captured
+  display (matched by display id). A non-activating, click-through panel on
+  every Space; a Core Animation opacity fade, off screen between flashes. With
+  Reduce Motion a still line with one plain fade; with Reduce Transparency an
+  opaque line. It starts only after the capture returned, and it is one of
+  glance's windows, which the capture filter excludes (`glance capture-check
+  --indicator` proves both with pixel comparisons).
 - Registration is checked at startup. If either chord fails to register, glance
   reports an error naming the chord (stderr and tray) instead of running without a
   working hotkey. See M2 in §14 for the acceptance check.
@@ -697,7 +708,7 @@ end-to-end run is `glance spike` (see README).
 | System-voice quality is good enough for daily use (all M1 tests ran at volume 0) | maintainer listening test |
 | A chord claimed by a macOS system shortcut may register without error yet never fire | M2 |
 | Permission grants persist across rebuilds with a stable signing identity | M2 |
-| ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`**; live capture ran on a real screen (46–49 ms at 2048 px). The exclusion itself is visible only once the M5 overlay exists |
+| ScreenCaptureKit crate's filter API for excluding glance's own windows | **Settled in M2: `with_excluding_applications`**; live capture ran on a real screen (46–49 ms at 2048 px). **Exclusion measured 2026-11-25** with the screenshot indicator held on screen (`glance capture-check --indicator`, from a terminal): glance's capture's edges unchanged (0.00–0.02 of 255) while a control capture with glance's windows left in saw the glow (48–52). Not yet run inside the signed bundle |
 | `cargo deny` advisory RUSTSEC-2026-0542 (`humantime` unmaintained, via `transcribe-rs`) | **Settled 2026-11-17: documented ignore in `deny.toml`** (unmaintained only, not linked, no input path); removed when transcribe-rs drops env_logger 0.10 |
 | Vision support of models served through Ollama/LM Studio endpoints | M4 |
 | egui overlay stays non-activating without a shim | M5 |
