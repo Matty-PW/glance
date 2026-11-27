@@ -45,7 +45,7 @@ struct RowUi {
 pub struct Models {
     page: Page,
     mtm: MainThreadMarker,
-    target: Retained<super::ui::Target>,
+    target: Retained<objc2::runtime::AnyObject>,
     page_index: isize,
     fast: Retained<NSPopUpButton>,
     deep: Retained<NSPopUpButton>,

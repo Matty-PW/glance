@@ -21,7 +21,7 @@ mod hotkeys;
 mod models;
 mod personality;
 mod think;
-mod ui;
+pub(crate) mod ui;
 mod voice;
 
 use std::cell::RefCell;

@@ -80,10 +80,12 @@ impl Flipped {
     }
 }
 
-/// Builds controls wired to one target. `tag` = page × 100 + control.
+/// Builds controls wired to one target (any object answering `changed:`:
+/// the settings window's or the setup window's). `tag` = page × 100 +
+/// control.
 pub struct Ui<'a> {
     pub mtm: MainThreadMarker,
-    pub target: &'a Target,
+    pub target: &'a AnyObject,
     pub page: isize,
 }
 
@@ -312,7 +314,7 @@ pub fn restart_note(mtm: MainThreadMarker) -> Retained<NSTextField> {
 impl Ui<'_> {
     fn wire(&self, control: &NSControl, id: isize) {
         control.setTag(self.page * 100 + id);
-        let target: &AnyObject = self.target;
+        let target = self.target;
         // SAFETY: the target is owned by the window, which also owns every
         // control, so it outlives them; `changed:` takes one object.
         unsafe {

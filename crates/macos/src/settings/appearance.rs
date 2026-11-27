@@ -6,7 +6,6 @@ use glance_orchestrator::settings::{
     Applied, SettingsBackend, SettingsChange, SettingsChoices, SettingsValues,
 };
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
 use objc2::sel;
 use objc2_app_kit::{
     NSBox, NSBoxType, NSColor, NSSegmentSwitchTracking, NSSegmentedControl, NSTitlePosition, NSView,
@@ -39,7 +38,7 @@ fn segments(ui: &Ui<'_>, labels: &[(&str, &str)], id: isize) -> Retained<NSSegme
         NSSegmentedControl::segmentedControlWithLabels_trackingMode_target_action(
             &NSArray::from_retained_slice(&labels),
             NSSegmentSwitchTracking::SelectOne,
-            Some(ui.target as &AnyObject),
+            Some(ui.target),
             Some(sel!(changed:)),
             ui.mtm,
         )

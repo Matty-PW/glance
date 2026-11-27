@@ -35,6 +35,12 @@ pub(crate) fn appearance(dark: bool) -> Option<Retained<NSAppearance>> {
 
 /// Draw `view` (at its size, at the screen's scale) into a PNG at `path`.
 pub(crate) fn save_view(view: &NSView, path: &Path) -> Result<(), String> {
+    let data = png_of(view)?;
+    std::fs::write(path, data).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Draw `view` (at its size, at the screen's scale) into PNG bytes.
+pub(crate) fn png_of(view: &NSView) -> Result<Vec<u8>, String> {
     view.layoutSubtreeIfNeeded();
     let bounds = view.bounds();
     let rep = view
@@ -46,7 +52,7 @@ pub(crate) fn save_view(view: &NSView, path: &Path) -> Result<(), String> {
         rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new())
     }
     .ok_or("could not encode the PNG")?;
-    std::fs::write(path, data.to_vec()).map_err(|e| format!("{}: {e}", path.display()))
+    Ok(data.to_vec())
 }
 
 const QUESTION: &str = "What does this chart show?";

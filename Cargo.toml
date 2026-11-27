@@ -82,4 +82,4 @@ dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
 # the objc2 crates (same author, MIT).
 block2 = "=0.6.2"
 # M2: microphone permission status (`AVCaptureDevice`) for the permission checklist.
-objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "AVCaptureDevice", "AVMediaFormat"] }
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "AVCaptureDevice", "AVMediaFormat", "block2"] }

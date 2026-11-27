@@ -16,10 +16,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::hotkeys;
 
-const SCREEN_SETTINGS: &str =
-    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
-const MIC_SETTINGS: &str =
-    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+use crate::permission::{MIC_SETTINGS, SCREEN_SETTINGS, open_settings_pane as open_settings};
 
 const ID_SCREEN: &str = "permission-screen";
 const ID_MIC: &str = "permission-mic";
@@ -344,14 +341,6 @@ fn age(elapsed: std::time::Duration) -> String {
         0..10 => "just taken".into(),
         s @ 10..60 => format!("{s} s old"),
         s => format!("{} min old", s / 60),
-    }
-}
-
-/// Open a System Settings pane. `open` with a fixed URL; nothing from the
-/// screen or the model ever reaches this.
-fn open_settings(url: &'static str) {
-    if let Err(e) = std::process::Command::new("/usr/bin/open").arg(url).spawn() {
-        eprintln!("glance: could not open System Settings: {e}");
     }
 }
 

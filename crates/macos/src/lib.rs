@@ -11,6 +11,9 @@
 //! - [`glow`]: the screenshot indicator, a glow around the captured display.
 //! - [`theme`]: the accent colour and spacing, the only colour values here.
 //! - [`snapshot`]: `glance ui-snapshots`, glance's own windows drawn to PNGs.
+//! - [`signing`]: whether this build is signed ad hoc (permissions lost at
+//!   each rebuild).
+//! - [`sample`]: the setup test's built-in chart, drawn in memory.
 //! - [`bundle`]: assembling and signing `Glance.app` (used by `cargo xtask`).
 //!
 //! On any other platform this crate is empty.
@@ -22,8 +25,10 @@ pub mod glow;
 pub mod hotkeys;
 mod overlay;
 pub mod permission;
+pub mod sample;
 mod settings;
 pub mod shell;
+pub mod signing;
 pub mod snapshot;
 pub mod system_voice;
 pub mod theme;
