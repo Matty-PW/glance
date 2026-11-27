@@ -137,8 +137,9 @@ pub fn run(args: Args) -> Result<()> {
         chords,
         model_line,
         on_quit: Box::new(move || {
-            // Stop a running download and remove its unfinished file.
-            glance_orchestrator::settings::ModelsBackend::cancel(&*quitting);
+            // Stop a running download and keep what arrived: the next
+            // download of that model resumes it.
+            glance_orchestrator::settings::ModelsBackend::pause(&*quitting);
             tiers::shutdown();
         }),
         on_new_session: Box::new(new_session),

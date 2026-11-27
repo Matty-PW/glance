@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use glance_orchestrator::settings::{
-    Applied, ModelRow, ModelState, ModelsBackend, SettingsBackend, SettingsChange, SettingsChoices,
-    SettingsValues,
+    Applied, DownloadIssue, DownloadProgress, ModelRow, ModelState, ModelsBackend, PartialRow,
+    SettingsBackend, SettingsChange, SettingsChoices, SettingsValues,
 };
 
 #[derive(clap::Args)]
@@ -142,7 +142,10 @@ impl ModelsBackend for DemoModels {
                 "kokoro-82m-v1.0-q8f16",
                 "voice",
                 0.09,
-                ModelState::NotDownloaded,
+                ModelState::Paused {
+                    done: 41_000_000,
+                    total: 86_000_000,
+                },
                 None,
             ),
             row(
@@ -159,8 +162,40 @@ impl ModelsBackend for DemoModels {
         Some(212_000_000_000)
     }
 
-    fn download(&self, _id: &str) -> Result<(), String> {
+    fn download_many(&self, _ids: &[String]) -> Result<(), DownloadIssue> {
         Ok(())
+    }
+
+    fn progress(&self) -> Option<DownloadProgress> {
+        None
+    }
+
+    fn pause(&self) {}
+
+    fn resume(&self, _id: Option<&str>) -> Result<(), DownloadIssue> {
+        Ok(())
+    }
+
+    fn partials(&self) -> Vec<PartialRow> {
+        vec![
+            PartialRow {
+                name: "a.part".into(),
+                belongs_to: Some((
+                    "kokoro-82m-v1.0-q8f16".into(),
+                    "onnx/model_q8f16.onnx".into(),
+                )),
+                bytes: 41_000_000,
+            },
+            PartialRow {
+                name: "b.part".into(),
+                belongs_to: None,
+                bytes: 1_200_000_000,
+            },
+        ]
+    }
+
+    fn clear_partials(&self) -> u64 {
+        0
     }
 
     fn verify(&self, _id: &str) -> Result<(), String> {

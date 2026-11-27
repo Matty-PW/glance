@@ -25,6 +25,7 @@ const DEEP: isize = 2;
 const BUDGET: isize = 3;
 const AUTO: isize = 4;
 const APPLY: isize = 5;
+const CLEAR: isize = 6;
 /// Model row buttons: FIRST_ROW + row × 3 + action.
 const FIRST_ROW: isize = 10;
 const PRIMARY: isize = 0;
@@ -54,6 +55,8 @@ pub struct Models {
     deep_items: Vec<Option<String>>,
     list: Retained<NSStackView>,
     free: Retained<NSTextField>,
+    partials: Retained<NSTextField>,
+    clear: Retained<NSButton>,
     rows: Vec<RowUi>,
     data: Vec<ModelRow>,
 }
@@ -109,6 +112,15 @@ impl Models {
         let free = ui::secondary(mtm, "", ui::TEXT_W * 2.0);
         let holder: Retained<NSView> = Retained::into_super(list.clone());
         page.group(mtm, "Pinned models", &[holder]);
+        let partials = ui::secondary(mtm, "", ui::TEXT_W);
+        let clear = ui.button("Clear…", CLEAR, false);
+        let partial_text = ui::stack(
+            mtm,
+            &[&ui::label(mtm, "Unfinished downloads"), &partials],
+            true,
+            2.0,
+        );
+        page.group(mtm, "", &[ui::row_with(mtm, &partial_text, &clear)]);
         page.add(&free);
         Self {
             page,
@@ -123,6 +135,8 @@ impl Models {
             deep_items: Vec::new(),
             list,
             free,
+            partials,
+            clear,
             rows: Vec::new(),
             data: Vec::new(),
         }
@@ -217,19 +231,38 @@ impl Models {
             );
             let complete = model.bytes_missing == 0;
             let busy = model.state.is_busy();
+            let downloading = matches!(
+                model.state,
+                ModelState::Preparing | ModelState::Downloading { .. }
+            );
             let failed = matches!(model.state, ModelState::Failed(_));
-            row.primary.setTitle(&NSString::from_str(if busy {
+            let paused = matches!(model.state, ModelState::Paused { .. });
+            row.primary.setTitle(&NSString::from_str(if downloading {
+                "Pause"
+            } else if busy {
                 "Cancel"
+            } else if paused {
+                "Resume"
             } else if failed && complete {
                 "Repair"
+            } else if failed {
+                "Retry"
             } else {
                 "Download"
             }));
             row.primary.setHidden(complete && !busy && !failed);
-            row.primary.setEnabled(busy || !any_busy);
-            row.check.setHidden(!complete);
-            row.check.setEnabled(!any_busy);
-            row.delete.setHidden(model.bytes_missing == model.bytes);
+            row.primary
+                .setEnabled(!matches!(model.state, ModelState::Queued) && (busy || !any_busy));
+            // While downloading, the second button cancels.
+            row.check.setTitle(&NSString::from_str(if downloading {
+                "Cancel"
+            } else {
+                "Check"
+            }));
+            row.check.setHidden(!complete && !downloading);
+            row.check.setEnabled(downloading || !any_busy);
+            row.delete
+                .setHidden(model.bytes_missing == model.bytes && !paused);
             row.delete.setEnabled(!busy && model.in_use.is_none());
             let tip = model
                 .in_use
@@ -243,6 +276,29 @@ impl Models {
             .map_or("Free space: unknown".to_owned(), |b| {
                 format!("Free space: {}", gb(b))
             });
+        let partials = backend.partials();
+        let kept: u64 = partials.iter().map(|p| p.bytes).sum();
+        let orphans = partials.iter().filter(|p| p.belongs_to.is_none()).count();
+        self.partials
+            .setStringValue(&NSString::from_str(&match partials.len() {
+                0 => "None.".to_owned(),
+                n => {
+                    let files = if n == 1 {
+                        "1 file".to_owned()
+                    } else {
+                        format!("{n} files")
+                    };
+                    let old = match orphans {
+                        0 => String::new(),
+                        k => format!(", {k} from models no longer pinned"),
+                    };
+                    format!(
+                        "{files}, {}{old}. Kept so a download can resume where it stopped.",
+                        gb(kept)
+                    )
+                }
+            }));
+        self.clear.setEnabled(!partials.is_empty());
         self.free.setStringValue(&NSString::from_str(&format!(
             "{free}. Downloads come only from Hugging Face at the pinned commit and must match each file's SHA-256."
         )));
@@ -258,10 +314,26 @@ impl Models {
             return Reply::Nothing;
         };
         let result: Result<Option<String>, String> = match action {
+            PRIMARY
+                if matches!(
+                    model.state,
+                    ModelState::Preparing | ModelState::Downloading { .. }
+                ) =>
+            {
+                backend.pause();
+                Ok(Some(format!(
+                    "Paused {}. Resume carries on where it stopped.",
+                    model.id
+                )))
+            }
             PRIMARY if model.state.is_busy() => {
                 backend.cancel();
                 Ok(Some(format!("Stopped {}.", model.id)))
             }
+            PRIMARY if matches!(model.state, ModelState::Paused { .. }) => backend
+                .resume(Some(&model.id))
+                .map(|()| None)
+                .map_err(|e| e.plain()),
             PRIMARY => {
                 let free = backend.free_bytes().map_or("unknown".to_owned(), gb);
                 let revision: String = model.revision.chars().take(12).collect();
@@ -275,6 +347,19 @@ impl Models {
                 );
                 if super::confirm(mtm, &format!("Download {}?", model.id), &text, "Download") {
                     backend.download(&model.id).map(|()| None)
+                } else {
+                    Ok(None)
+                }
+            }
+            CHECK if model.state.is_busy() => {
+                if super::confirm(
+                    mtm,
+                    &format!("Cancel the download of {}?", model.id),
+                    "What has been downloaded so far is deleted. Pause keeps it instead.",
+                    "Cancel download",
+                ) {
+                    backend.cancel();
+                    Ok(Some(format!("Cancelled {}.", model.id)))
                 } else {
                     Ok(None)
                 }
@@ -301,6 +386,29 @@ impl Models {
             Ok(None) => Reply::Nothing,
             Err(e) => Reply::Say(e),
         }
+    }
+
+    fn clear_partials(&mut self) -> Reply {
+        let (Some(models), Some(mtm)) = (crate::shell::models_backend(), MainThreadMarker::new())
+        else {
+            return Reply::Nothing;
+        };
+        let kept: u64 = models.partials().iter().map(|p| p.bytes).sum();
+        if !super::confirm(
+            mtm,
+            "Clear unfinished downloads?",
+            &format!(
+                "This deletes {} of partly downloaded files. A download that is running now is \
+                 kept. Downloaded models are not touched.",
+                gb(kept)
+            ),
+            "Clear",
+        ) {
+            return Reply::Nothing;
+        }
+        let freed = models.clear_partials();
+        self.show_rows();
+        Reply::Say(format!("Cleared {}.", gb(freed)))
     }
 
     fn models_change(&self) -> SettingsChange {
@@ -365,6 +473,7 @@ impl Section for Models {
 
     fn on_change(&mut self, id: isize, backend: &dyn SettingsBackend) -> Reply {
         match id {
+            CLEAR => self.clear_partials(),
             APPLY => match backend.apply(self.models_change()) {
                 Ok(Applied::NeedsRestart) => Reply::Restart,
                 other => Reply::Applied(other),
@@ -427,6 +536,13 @@ fn status_line(state: &ModelState) -> String {
         ModelState::Verified => "Checked against its pins".into(),
         ModelState::Failed(e) => format!("Failed: {e}"),
         ModelState::Preparing => "Checking files…".into(),
+        ModelState::Queued => "Waiting to download".into(),
+        ModelState::Paused { done, total } => format!(
+            "Paused at {}% ({} of {}); resumes where it stopped",
+            done * 100 / (*total).max(1),
+            gb(*done),
+            gb(*total)
+        ),
         ModelState::Downloading { done, total } => format!(
             "Downloading {}% ({} of {})",
             done * 100 / (*total).max(1),
@@ -446,6 +562,8 @@ fn status_symbol(state: &ModelState) -> &'static str {
         ModelState::Verified => "checkmark.seal",
         ModelState::Failed(_) => "exclamationmark.triangle",
         ModelState::Preparing | ModelState::Verifying { .. } => "magnifyingglass",
+        ModelState::Queued => "clock",
+        ModelState::Paused { .. } => "pause.circle",
         ModelState::Downloading { .. } => "arrow.down.circle.dotted",
     }
 }

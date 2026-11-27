@@ -1,22 +1,36 @@
-//! The models panel's backend: list, download, verify and delete the models
-//! pinned in `models.toml`, through the same downloader and store as
-//! `glance models` (HTTPS from huggingface.co, allowlisted CDN redirects,
-//! pinned size and SHA-256 checked before a file enters the store). Nothing
-//! outside the manifest can be downloaded or deleted from here.
+//! The models panel's backend (and setup's downloads): list, download,
+//! verify and delete the models pinned in `models.toml`, through the same
+//! downloader and store as `glance models` (HTTPS from huggingface.co,
+//! allowlisted CDN redirects, pinned size and SHA-256 checked before a file
+//! enters the store). Nothing outside the manifest can be downloaded or
+//! deleted from here.
 //!
-//! One job (a download or a check) runs at a time; the window polls
-//! [`ModelsBackend::rows`] for progress.
+//! One job runs at a time: a download queue (one or more models, one after
+//! another) or a check. Windows poll [`ModelsBackend::rows`] and
+//! [`ModelsBackend::progress`].
+//!
+//! Unfinished downloads: Pause, a failure and Quit keep the partial file, and
+//! the next download of that model resumes it (the downloader re-hashes it
+//! first). Cancel deletes it. "Clear" deletes every partial but the running
+//! one's.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use glance_models::{Manifest, Model, ModelStore, Role};
-use glance_orchestrator::settings::{ModelRow, ModelState, ModelsBackend};
+use glance_models::{Failure, Manifest, Model, ModelStore, Role};
+use glance_orchestrator::settings::{
+    DownloadIssue, DownloadPhase, DownloadProgress, FileProgress, FileState, ModelRow, ModelState,
+    ModelsBackend, PartialRow,
+};
 
 /// Kept free beyond a download's size, so a full disk never stops macOS.
-const DISK_MARGIN: u64 = 2_000_000_000;
+pub const DISK_MARGIN: u64 = 2_000_000_000;
+
+/// Speed is measured over this window.
+const RATE_WINDOW: Duration = Duration::from_secs(5);
 
 /// What uses which model: `(id, label)` pairs.
 pub type InUse = Box<dyn Fn() -> Vec<(String, String)> + Send + Sync>;
@@ -29,10 +43,25 @@ pub struct ModelsManager {
     job: Mutex<Option<Job>>,
     /// The last check or download result per model, this session.
     checked: Mutex<HashMap<String, Result<(), String>>>,
+    /// The current or last download queue.
+    progress: Arc<Mutex<Option<DownloadProgress>>>,
+    /// The ids of the last paused or failed queue, for Resume.
+    paused: Mutex<Vec<String>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    Download,
+    Verify,
 }
 
 struct Job {
-    id: String,
+    kind: JobKind,
+    /// The models of the job, in order.
+    queue: Vec<String>,
+    /// The one being worked on now.
+    current: Arc<Mutex<String>>,
+    /// Its row state.
     state: Arc<Mutex<ModelState>>,
     cancel: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
@@ -40,6 +69,58 @@ struct Job {
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Download speed over the last few seconds.
+#[derive(Default)]
+pub(crate) struct Rate {
+    samples: VecDeque<(Instant, u64)>,
+}
+
+impl Rate {
+    /// `fetched`: bytes received this session (it only goes back when a
+    /// file starts over, which resets the measurement).
+    pub(crate) fn push(&mut self, at: Instant, fetched: u64) {
+        if self.samples.back().is_some_and(|&(_, last)| fetched < last) {
+            self.samples.clear();
+        }
+        self.samples.push_back((at, fetched));
+        while self.samples.len() > 2
+            && self
+                .samples
+                .front()
+                .is_some_and(|&(t, _)| at.duration_since(t) > RATE_WINDOW)
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    /// Bytes per second, once at least a second has been measured.
+    pub(crate) fn per_sec(&self) -> Option<f64> {
+        let (&(t0, b0), &(t1, b1)) = (self.samples.front()?, self.samples.back()?);
+        let secs = t1.duration_since(t0).as_secs_f64();
+        (secs >= 1.0).then(|| (b1 - b0) as f64 / secs)
+    }
+}
+
+/// Time left at `rate` bytes per second.
+pub(crate) fn remaining(done: u64, total: u64, rate: Option<f64>) -> Option<Duration> {
+    let rate = rate.filter(|r| *r > 1.0)?;
+    Some(Duration::from_secs_f64(
+        total.saturating_sub(done) as f64 / rate,
+    ))
+}
+
+fn issue_of(failure: Failure) -> DownloadIssue {
+    match failure {
+        Failure::Offline => DownloadIssue::Offline,
+        Failure::HostRefused(host) => DownloadIssue::HostRefused(host),
+        Failure::Status(code) => DownloadIssue::Status(code),
+        Failure::BadReply => DownloadIssue::BadReply,
+        Failure::Checksum => DownloadIssue::Checksum,
+        Failure::DiskFull => DownloadIssue::DiskFull,
+        Failure::Disk => DownloadIssue::Disk,
+    }
 }
 
 impl ModelsManager {
@@ -56,6 +137,8 @@ impl ModelsManager {
             in_use,
             job: Mutex::new(None),
             checked: Mutex::new(HashMap::new()),
+            progress: Arc::new(Mutex::new(None)),
+            paused: Mutex::new(Vec::new()),
         })
     }
 
@@ -65,13 +148,33 @@ impl ModelsManager {
             .ok_or_else(|| format!("{id} is not in models.toml"))
     }
 
-    /// The running job, if it has not finished.
+    /// The model the running job is working on, if it has not finished.
     fn busy(&self) -> Option<String> {
         let mut job = lock(&self.job);
         if job.as_ref().is_some_and(|j| j.task.is_finished()) {
             *job = None;
         }
-        job.as_ref().map(|j| j.id.clone())
+        job.as_ref().map(|j| lock(&j.current).clone())
+    }
+
+    /// Bytes of each file already on disk: the whole file when it has its
+    /// pinned size, else what an unfinished download kept.
+    fn on_disk(&self, model: &Model) -> Vec<(u64, bool)> {
+        model
+            .files
+            .iter()
+            .map(|f| {
+                let complete = std::fs::metadata(self.store.file_path(model, f))
+                    .is_ok_and(|m| m.is_file() && m.len() == f.size);
+                if complete {
+                    (f.size, true)
+                } else {
+                    let kept = std::fs::metadata(self.store.partial_path(f))
+                        .map_or(0, |m| m.len().min(f.size));
+                    (kept, false)
+                }
+            })
+            .collect()
     }
 
     fn missing_bytes(&self, model: &Model) -> u64 {
@@ -86,31 +189,10 @@ impl ModelsManager {
             .sum()
     }
 
-    fn start(
-        self: &Arc<Self>,
-        id: &str,
-        first: ModelState,
-        work: impl FnOnce(
-            Arc<Self>,
-            Arc<Mutex<ModelState>>,
-            Arc<AtomicBool>,
-        ) -> tokio::task::JoinHandle<()>,
-    ) -> Result<(), String> {
-        if let Some(other) = self.busy() {
-            return Err(format!(
-                "{other} is still being worked on; wait or cancel it"
-            ));
-        }
-        let state = Arc::new(Mutex::new(first));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let task = work(Arc::clone(self), Arc::clone(&state), Arc::clone(&cancel));
-        *lock(&self.job) = Some(Job {
-            id: id.to_owned(),
-            state,
-            cancel,
-            task,
-        });
-        Ok(())
+    /// Bytes still to fetch, counting what partials already hold.
+    fn to_fetch(&self, model: &Model) -> u64 {
+        let total: u64 = model.files.iter().map(|f| f.size).sum();
+        total.saturating_sub(self.on_disk(model).iter().map(|(b, _)| b).sum())
     }
 
     fn finish(&self, id: &str, result: Result<(), String>) {
@@ -118,6 +200,219 @@ impl ModelsManager {
             eprintln!("glance: models: {id}: {e}");
         }
         lock(&self.checked).insert(id.to_owned(), result);
+    }
+
+    /// Start the download queue `ids`.
+    fn start_download(self: &Arc<Self>, ids: &[String]) -> Result<(), DownloadIssue> {
+        if let Some(other) = self.busy() {
+            let same = lock(&self.job)
+                .as_ref()
+                .is_some_and(|j| j.kind == JobKind::Download && j.queue == ids);
+            return if same {
+                Ok(())
+            } else {
+                Err(DownloadIssue::Busy(other))
+            };
+        }
+        let models: Vec<Model> = ids
+            .iter()
+            .map(|id| {
+                self.manifest
+                    .model(id)
+                    .cloned()
+                    .ok_or_else(|| DownloadIssue::NotPinned(id.clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        let needed: u64 = models.iter().map(|m| self.to_fetch(m)).sum();
+        if needed > 0
+            && let Some(free) = free_bytes(self.store.root())
+            && free < needed + DISK_MARGIN
+        {
+            let issue = DownloadIssue::NotEnoughSpace {
+                needed: needed + DISK_MARGIN,
+                free,
+            };
+            eprintln!("glance: models: download code={}", issue.code());
+            return Err(issue);
+        }
+        // The starting picture: whole files done, partials counted.
+        let mut files = Vec::new();
+        for model in &models {
+            for (file, (bytes, complete)) in model.files.iter().zip(self.on_disk(model)) {
+                files.push(FileProgress {
+                    model: model.id.clone(),
+                    path: file.path.clone(),
+                    done: bytes,
+                    total: file.size,
+                    state: if complete {
+                        FileState::Done
+                    } else {
+                        FileState::Waiting
+                    },
+                });
+            }
+        }
+        let start: Vec<u64> = files.iter().map(|f| f.done).collect();
+        let total = files.iter().map(|f| f.total).sum();
+        *lock(&self.progress) = Some(DownloadProgress {
+            phase: DownloadPhase::Running,
+            done: files.iter().map(|f| f.done).sum(),
+            total,
+            files,
+            bytes_per_sec: None,
+            remaining: None,
+        });
+        lock(&self.paused).clear();
+        for model in &models {
+            lock(&self.checked).remove(&model.id);
+            eprintln!(
+                "glance: models: downloading {} from huggingface.co/{} at {}",
+                model.id, model.repo, model.revision
+            );
+        }
+        let first = models[0].id.clone();
+        let current = Arc::new(Mutex::new(first));
+        let state = Arc::new(Mutex::new(ModelState::Preparing));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let m = Arc::clone(self);
+        let (job_current, job_state) = (Arc::clone(&current), Arc::clone(&state));
+        let queue: Vec<String> = ids.to_vec();
+        let task = self.runtime.spawn(async move {
+            let mut rate = Rate::default();
+            let mut offset = 0; // index of this model's first file
+            for model in &models {
+                *lock(&job_current) = model.id.clone();
+                *lock(&job_state) = ModelState::Preparing;
+                let model_total: u64 = model.files.iter().map(|f| f.size).sum();
+                let result = glance_models::pull(&m.store, model, |file, done, _| {
+                    let index = offset
+                        + model
+                            .files
+                            .iter()
+                            .position(|f| f.path == file.path)
+                            .unwrap_or(0);
+                    let mut guard = lock(&m.progress);
+                    let Some(p) = guard.as_mut() else { return };
+                    // Earlier files of this model have passed their check.
+                    for f in &mut p.files[offset..index] {
+                        f.done = f.total;
+                        f.state = FileState::Done;
+                    }
+                    let entry = &mut p.files[index];
+                    entry.done = done;
+                    entry.state = if done == entry.total {
+                        FileState::Checking
+                    } else {
+                        FileState::Downloading
+                    };
+                    p.done = p.files.iter().map(|f| f.done).sum();
+                    let fetched = p
+                        .files
+                        .iter()
+                        .zip(&start)
+                        .map(|(f, s)| f.done.saturating_sub(*s))
+                        .sum();
+                    rate.push(Instant::now(), fetched);
+                    p.bytes_per_sec = rate.per_sec();
+                    p.remaining = remaining(p.done, p.total, p.bytes_per_sec);
+                    let model_done = p.files[offset..offset + model.files.len()]
+                        .iter()
+                        .map(|f| f.done)
+                        .sum();
+                    *lock(&job_state) = ModelState::Downloading {
+                        done: model_done,
+                        total: model_total,
+                    };
+                })
+                .await;
+                match result {
+                    Ok(_) => {
+                        if let Some(p) = lock(&m.progress).as_mut() {
+                            for f in &mut p.files[offset..offset + model.files.len()] {
+                                f.done = f.total;
+                                f.state = FileState::Done;
+                            }
+                            p.done = p.files.iter().map(|f| f.done).sum();
+                        }
+                        // pull checks every file against its pin.
+                        m.finish(&model.id, Ok(()));
+                    }
+                    Err(e) => {
+                        let issue = issue_of(e.failure());
+                        if issue == DownloadIssue::BadReply {
+                            // A broken partial reply would only repeat.
+                            m.store.remove_partials(model);
+                        }
+                        eprintln!(
+                            "glance: models: {} download code={}",
+                            model.id,
+                            issue.code()
+                        );
+                        m.finish(&model.id, Err(issue.plain()));
+                        if let Some(p) = lock(&m.progress).as_mut() {
+                            p.phase = DownloadPhase::Failed(issue);
+                            p.bytes_per_sec = None;
+                            p.remaining = None;
+                        }
+                        *lock(&m.paused) = models.iter().map(|m| m.id.clone()).collect();
+                        return;
+                    }
+                }
+                offset += model.files.len();
+            }
+            if let Some(p) = lock(&m.progress).as_mut() {
+                p.phase = DownloadPhase::Finished;
+                p.bytes_per_sec = None;
+                p.remaining = Some(Duration::ZERO);
+            }
+        });
+        *lock(&self.job) = Some(Job {
+            kind: JobKind::Download,
+            queue,
+            current,
+            state,
+            cancel,
+            task,
+        });
+        Ok(())
+    }
+
+    /// Stop the running job. `keep`: leave its partial files for a resume.
+    fn stop(&self, keep: bool) {
+        let Some(job) = lock(&self.job).take() else {
+            return;
+        };
+        job.cancel.store(true, Ordering::Relaxed);
+        job.task.abort();
+        if job.kind != JobKind::Download {
+            return;
+        }
+        if let Some(p) = lock(&self.progress).as_mut()
+            && p.phase == DownloadPhase::Running
+        {
+            p.phase = if keep {
+                DownloadPhase::Paused
+            } else {
+                DownloadPhase::Cancelled
+            };
+            p.bytes_per_sec = None;
+            p.remaining = None;
+        }
+        if keep {
+            *lock(&self.paused) = job.queue.clone();
+            eprintln!("glance: models: download paused");
+            return;
+        }
+        let mut freed = 0;
+        for id in &job.queue {
+            if let Some(model) = self.manifest.model(id) {
+                freed += self.store.remove_partials(model);
+            }
+        }
+        eprintln!(
+            "glance: models: download cancelled ({:.1} GB of unfinished download removed)",
+            freed as f64 / 1e9
+        );
     }
 }
 
@@ -129,7 +424,17 @@ impl ModelsBackend for Models {
         let m = &self.0;
         let in_use = (m.in_use)();
         let busy = m.busy();
-        let job_state = lock(&m.job).as_ref().map(|j| lock(&j.state).clone());
+        let job = lock(&m.job).as_ref().map(|j| {
+            let current = lock(&j.current).clone();
+            let ahead: Vec<String> = j
+                .queue
+                .iter()
+                .skip_while(|id| **id != current)
+                .skip(1)
+                .cloned()
+                .collect();
+            (lock(&j.state).clone(), ahead)
+        });
         let checked = lock(&m.checked).clone();
         m.manifest
             .models()
@@ -137,14 +442,20 @@ impl ModelsBackend for Models {
             .map(|model| {
                 let present = m.store.files_present(model);
                 let total = model.files.len();
-                let state = match (&busy, &job_state) {
-                    (Some(id), Some(state)) if *id == model.id => state.clone(),
-                    _ if present == 0 => match checked.get(&model.id) {
-                        Some(Err(e)) => ModelState::Failed(e.clone()),
-                        _ => ModelState::NotDownloaded,
-                    },
+                let on_disk = m.on_disk(model);
+                let kept: u64 = on_disk.iter().map(|(b, _)| b).sum();
+                let bytes: u64 = model.files.iter().map(|f| f.size).sum();
+                let has_partial = on_disk.iter().any(|(b, complete)| !complete && *b > 0);
+                let state = match (&busy, &job) {
+                    (Some(id), Some((state, _))) if *id == model.id => state.clone(),
+                    (Some(_), Some((_, ahead))) if ahead.contains(&model.id) => ModelState::Queued,
                     _ => match checked.get(&model.id) {
                         Some(Err(e)) => ModelState::Failed(e.clone()),
+                        _ if has_partial => ModelState::Paused {
+                            done: kept,
+                            total: bytes,
+                        },
+                        _ if present == 0 => ModelState::NotDownloaded,
                         _ if present < total => ModelState::Partial { present, total },
                         Some(Ok(())) => ModelState::Verified,
                         None => ModelState::Downloaded,
@@ -166,7 +477,7 @@ impl ModelsBackend for Models {
                     license: model.license.clone(),
                     repo: model.repo.clone(),
                     revision: model.revision.clone(),
-                    bytes: model.files.iter().map(|f| f.size).sum(),
+                    bytes,
                     bytes_missing: m.missing_bytes(model),
                     state,
                     in_use: (!uses.is_empty()).then(|| uses.join(", ")),
@@ -179,52 +490,12 @@ impl ModelsBackend for Models {
         free_bytes(self.0.store.root())
     }
 
-    fn download(&self, id: &str) -> Result<(), String> {
-        let m = &self.0;
-        let model = m.model(id)?;
-        let missing = m.missing_bytes(model);
-        if let Some(free) = self.free_bytes()
-            && free < missing + DISK_MARGIN
-        {
-            return Err(format!(
-                "not enough disk space: {id} needs {:.1} GB more and {:.1} GB is free \
-                 (glance keeps {:.0} GB spare)",
-                missing as f64 / 1e9,
-                free as f64 / 1e9,
-                DISK_MARGIN as f64 / 1e9
-            ));
-        }
-        let model = model.clone();
-        eprintln!(
-            "glance: models: downloading {} from huggingface.co/{} at {}",
-            model.id, model.repo, model.revision
-        );
-        m.start(id, ModelState::Preparing, |m, state, _cancel| {
-            m.runtime.clone().spawn(async move {
-                let mut done: HashMap<String, u64> = HashMap::new();
-                let total: u64 = model.files.iter().map(|f| f.size).sum();
-                let result = glance_models::pull(&m.store, &model, |file, bytes, _| {
-                    done.insert(file.path.clone(), bytes);
-                    // Files already verified count as done.
-                    let finished: u64 = model
-                        .files
-                        .iter()
-                        .map(|f| done.get(&f.path).copied().unwrap_or(0))
-                        .sum();
-                    let present_before = total.saturating_sub(missing);
-                    *lock(&state) = ModelState::Downloading {
-                        done: (present_before + finished).min(total),
-                        total,
-                    };
-                })
-                .await;
-                if result.is_err() {
-                    // Downloads start over, so an unfinished file is no use.
-                    m.store.remove_partials(&model);
-                }
-                m.finish(&model.id, result.map(|_| ()).map_err(|e| e.to_string()));
-            })
-        })
+    fn download_many(&self, ids: &[String]) -> Result<(), DownloadIssue> {
+        self.0.start_download(ids)
+    }
+
+    fn progress(&self) -> Option<DownloadProgress> {
+        lock(&self.0.progress).clone()
     }
 
     fn verify(&self, id: &str) -> Result<(), String> {
@@ -233,43 +504,55 @@ impl ModelsBackend for Models {
         if m.store.files_present(&model) < model.files.len() {
             return Err(format!("{id} is not fully downloaded"));
         }
+        if let Some(other) = m.busy() {
+            return Err(DownloadIssue::Busy(other).plain());
+        }
         let files = model.files.len();
-        m.start(
-            id,
-            ModelState::Verifying { file: 1, files },
-            |m, state, cancel| {
-                m.runtime.clone().spawn_blocking(move || {
-                    for (i, file) in model.files.iter().enumerate() {
-                        if cancel.load(Ordering::Relaxed) {
-                            return;
-                        }
-                        *lock(&state) = ModelState::Verifying { file: i + 1, files };
-                        if let Err(e) = m.store.verify_file(&model, file) {
-                            m.finish(&model.id, Err(e.to_string()));
-                            return;
-                        }
-                    }
-                    m.finish(&model.id, Ok(()));
-                })
-            },
-        )
+        let state = Arc::new(Mutex::new(ModelState::Verifying { file: 1, files }));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (task_state, task_cancel, task_m) =
+            (Arc::clone(&state), Arc::clone(&cancel), Arc::clone(m));
+        let task = m.runtime.spawn_blocking(move || {
+            for (i, file) in model.files.iter().enumerate() {
+                if task_cancel.load(Ordering::Relaxed) {
+                    return;
+                }
+                *lock(&task_state) = ModelState::Verifying { file: i + 1, files };
+                if let Err(e) = task_m.store.verify_file(&model, file) {
+                    task_m.finish(&model.id, Err(e.to_string()));
+                    return;
+                }
+            }
+            task_m.finish(&model.id, Ok(()));
+        });
+        *lock(&m.job) = Some(Job {
+            kind: JobKind::Verify,
+            queue: vec![id.to_owned()],
+            current: Arc::new(Mutex::new(id.to_owned())),
+            state,
+            cancel,
+            task,
+        });
+        Ok(())
+    }
+
+    fn pause(&self) {
+        self.0.stop(true);
+    }
+
+    fn resume(&self, id: Option<&str>) -> Result<(), DownloadIssue> {
+        let queue = match id {
+            Some(id) => vec![id.to_owned()],
+            None => lock(&self.0.paused).clone(),
+        };
+        if queue.is_empty() {
+            return Ok(());
+        }
+        self.0.start_download(&queue)
     }
 
     fn cancel(&self) {
-        let m = &self.0;
-        let Some(job) = lock(&m.job).take() else {
-            return;
-        };
-        job.cancel.store(true, Ordering::Relaxed);
-        job.task.abort();
-        if let Some(model) = m.manifest.model(&job.id) {
-            let freed = m.store.remove_partials(model);
-            eprintln!(
-                "glance: models: {} cancelled ({:.1} GB of unfinished download removed)",
-                job.id,
-                freed as f64 / 1e9
-            );
-        }
+        self.0.stop(false);
     }
 
     fn delete(&self, id: &str) -> Result<u64, String> {
@@ -296,11 +579,55 @@ impl ModelsBackend for Models {
         );
         Ok(freed)
     }
+
+    fn partials(&self) -> Vec<PartialRow> {
+        let m = &self.0;
+        let owner = |sha: &str| {
+            m.manifest.models().iter().find_map(|model| {
+                model
+                    .files
+                    .iter()
+                    .find(|f| f.sha256 == sha)
+                    .map(|f| (model.id.clone(), f.path.clone()))
+            })
+        };
+        m.store
+            .partials()
+            .into_iter()
+            .map(|p| PartialRow {
+                belongs_to: p.sha256.as_deref().and_then(owner),
+                name: p.name,
+                bytes: p.bytes,
+            })
+            .collect()
+    }
+
+    fn clear_partials(&self) -> u64 {
+        let m = &self.0;
+        // Never the running download's files.
+        let running: Vec<String> = match (m.busy(), lock(&m.job).as_ref()) {
+            (Some(_), Some(job)) if job.kind == JobKind::Download => job
+                .queue
+                .iter()
+                .filter_map(|id| m.manifest.model(id))
+                .flat_map(|model| model.files.iter().map(|f| f.sha256.clone()))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let keep: Vec<&str> = running.iter().map(String::as_str).collect();
+        let freed = m.store.clear_partials(&keep);
+        lock(&m.paused).clear();
+        eprintln!(
+            "glance: models: cleared unfinished downloads ({:.1} GB)",
+            freed as f64 / 1e9
+        );
+        freed
+    }
 }
 
 /// Free bytes on the volume holding `path` (or its nearest existing
 /// parent), from `/bin/df`.
-fn free_bytes(path: &Path) -> Option<u64> {
+pub fn free_bytes(path: &Path) -> Option<u64> {
     let existing = path.ancestors().find(|p| p.exists())?;
     let out = std::process::Command::new("/bin/df")
         .arg("-k")
@@ -453,10 +780,97 @@ mod tests {
                 .unwrap_err()
                 .contains("not in models.toml")
         );
-        assert!(models.download("nope").is_err());
+        assert_eq!(
+            models.download("nope"),
+            Err(DownloadIssue::NotPinned("nope".into()).plain())
+        );
         assert_eq!(models.delete("spare").unwrap(), 3);
         assert_eq!(state(&models, "spare"), ModelState::NotDownloaded);
         assert_eq!(state(&models, "used"), ModelState::Downloaded);
+    }
+
+    #[test]
+    fn a_kept_partial_shows_as_paused_and_can_be_cleared() {
+        let (models, store, _rt) = setup("partials");
+        let manifest = manifest();
+        let file = &manifest.model("spare").unwrap().files[0];
+        std::fs::create_dir_all(store.partial_dir()).unwrap();
+        std::fs::write(store.partial_path(file), b"ab").unwrap();
+        std::fs::write(
+            store.partial_dir().join(format!("{}.part", "c".repeat(64))),
+            b"x",
+        )
+        .unwrap();
+        // Both models pin the same hash in this test manifest, so both show it.
+        assert_eq!(
+            state(&models, "spare"),
+            ModelState::Paused { done: 2, total: 3 }
+        );
+        let partials = models.partials();
+        assert_eq!(partials.len(), 2);
+        assert!(
+            partials
+                .iter()
+                .any(|p| p.belongs_to.is_none() && p.bytes == 1)
+        );
+        assert!(
+            partials
+                .iter()
+                .any(|p| p.belongs_to.is_some() && p.bytes == 2)
+        );
+        assert_eq!(models.clear_partials(), 3);
+        assert!(models.partials().is_empty());
+        assert_eq!(state(&models, "spare"), ModelState::NotDownloaded);
+    }
+
+    #[test]
+    fn a_download_that_needs_more_space_than_the_disk_has_is_refused() {
+        // The real disk is checked, so ask for a model larger than any disk.
+        let big = Manifest::parse(&format!(
+            "schema = 1\n[[model]]\nid = \"huge\"\nrole = \"stt\"\nlicense = \"MIT\"\nrepo = \"o/r\"\n\
+             revision = \"0123456789abcdef0123456789abcdef01234567\"\n[[model.file]]\n\
+             path = \"a.onnx\"\nkind = \"weights\"\nformat = \"onnx\"\nsize = {}\nsha256 = \"{ABC_SHA}\"\n",
+            u64::MAX / 4
+        ))
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("glance-panel-huge-{}", std::process::id()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let models = Models(ModelsManager::new(
+            big,
+            ModelStore::new(&dir),
+            runtime.handle().clone(),
+            Box::new(Vec::new),
+        ));
+        assert!(matches!(
+            models.download_many(&["huge".into()]),
+            Err(DownloadIssue::NotEnoughSpace { .. })
+        ));
+        assert!(models.progress().is_none());
+    }
+
+    #[test]
+    fn speed_and_time_left_come_from_the_last_seconds() {
+        let t = Instant::now();
+        let mut rate = Rate::default();
+        rate.push(t, 0);
+        assert_eq!(rate.per_sec(), None);
+        rate.push(t + Duration::from_secs(1), 10_000_000);
+        rate.push(t + Duration::from_secs(2), 20_000_000);
+        assert_eq!(rate.per_sec(), Some(10_000_000.0));
+        assert_eq!(
+            remaining(20_000_000, 50_000_000, rate.per_sec()),
+            Some(Duration::from_secs(3))
+        );
+        // Old samples fall out of the window.
+        rate.push(t + Duration::from_secs(20), 60_000_000);
+        rate.push(t + Duration::from_secs(21), 61_000_000);
+        assert_eq!(rate.per_sec(), Some(1_000_000.0));
+        // A file starting over resets the measurement.
+        rate.push(t + Duration::from_secs(22), 5);
+        assert_eq!(rate.per_sec(), None);
+        assert_eq!(remaining(1, 2, None), None);
     }
 
     #[test]
