@@ -612,6 +612,7 @@ pub(super) async fn start_server(
                 .with_context(|| format!("{id} has no {kind:?} file"))
         };
         Ok(ServerSpec {
+            program: crate::config::Config::load()?.models.llama_server()?,
             weights: file(Kind::Weights)?,
             mmproj: file(Kind::Mmproj)?,
             alias: id.clone(),

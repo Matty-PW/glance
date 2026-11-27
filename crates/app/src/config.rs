@@ -40,6 +40,8 @@
 //! deep_effort = "medium"        # Qwen3.8 reasoning effort: low, medium, xhigh, or off
 //! deep_thinking_budget = 128    # cap on DEEP's thinking tokens (managed DEEP only; 0: no cap)
 //! deep_mtp = true               # speculative decoding with the model's MTP layers
+//! # llama_server = "/opt/homebrew/bin/llama-server"  # absolute path; default: the first
+//! #                             # of /opt/homebrew/bin and /usr/local/bin (PATH is never used)
 //!
 //! [overlay]
 //! enabled = true                # the floating panel with question and answer
@@ -149,9 +151,19 @@ pub struct ModelsConfig {
     pub personality: String,
     /// The style text for `personality = "custom"`.
     pub personality_custom: String,
+    /// An absolute path to llama-server; otherwise glance looks in fixed
+    /// directories only (`glance_llm_client::server::LLAMA_SERVER_DIRS`).
+    pub llama_server: Option<String>,
 }
 
 impl ModelsConfig {
+    /// The llama-server glance runs (never looked up on PATH).
+    pub fn llama_server(&self) -> Result<PathBuf> {
+        Ok(glance_llm_client::server::find_llama_server(
+            self.llama_server.as_deref().map(std::path::Path::new),
+        )?)
+    }
+
     pub fn response_length(&self) -> glance_orchestrator::ResponseLength {
         glance_orchestrator::ResponseLength::parse(&self.response_length).unwrap_or_default()
     }
@@ -218,6 +230,7 @@ impl Default for ModelsConfig {
             response_length: "medium".into(),
             personality: "neutral".into(),
             personality_custom: String::new(),
+            llama_server: None,
         }
     }
 }
@@ -362,6 +375,11 @@ impl Config {
                 config.models.deep_effort
             );
         }
+        if let Some(path) = &config.models.llama_server
+            && !(path.starts_with('/') && !path.contains('\0') && !path.ends_with('/'))
+        {
+            bail!("models.llama_server must be an absolute path to the program, got \"{path}\"");
+        }
         for (name, ctx) in [
             ("fast_ctx", config.models.fast_ctx),
             ("deep_ctx", config.models.deep_ctx),
@@ -454,6 +472,26 @@ mod tests {
         assert!(Config::parse("[models]\npersonality = \"robot\"\n").is_err());
         let long = format!("[models]\npersonality_custom = \"{}\"\n", "a".repeat(301));
         assert!(Config::parse(&long).is_err());
+    }
+
+    #[test]
+    fn llama_server_must_be_absolute() {
+        assert!(Config::parse("").unwrap().models.llama_server.is_none());
+        let c = Config::parse("[models]\nllama_server = \"/opt/x/llama-server\"\n").unwrap();
+        assert_eq!(
+            c.models.llama_server.as_deref(),
+            Some("/opt/x/llama-server")
+        );
+        for bad in [
+            "llama-server",
+            "bin/llama-server",
+            "~/llama-server",
+            "/opt/bin/",
+            "",
+        ] {
+            let text = format!("[models]\nllama_server = \"{bad}\"\n");
+            assert!(Config::parse(&text).is_err(), "{bad} should be refused");
+        }
     }
 
     #[test]

@@ -45,6 +45,7 @@ pub async fn run(args: Args) -> Result<()> {
             .with_context(|| format!("{} has no {kind:?} file", model.id))
     };
     let spec = ServerSpec {
+        program: crate::config::Config::load()?.models.llama_server()?,
         weights: file(Kind::Weights)?,
         mmproj: file(Kind::Mmproj)?,
         alias: model.id.clone(),

@@ -8,13 +8,16 @@
 //!   does not report vision.
 //! - The child's output is discarded unless asked for, so nothing it might
 //!   log about a request ends up anywhere.
+//! - The program is found only by absolute path: an explicit one from the
+//!   config, or the first of [`LLAMA_SERVER_DIRS`]. `PATH` is never read,
+//!   so what runs does not depend on how glance was launched.
 //! - Dropping [`ManagedServer`] kills the process. With a `pid_dir`, a PID
 //!   file lets a later glance stop a server left behind by a crash
 //!   ([`crate::stale`]).
 
 use std::io::Read;
 use std::net::TcpListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -24,7 +27,17 @@ use crate::endpoint::{ApiKey, Endpoint};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
-    #[error("could not start llama-server (is it installed? `brew install llama.cpp`): {0}")]
+    #[error(
+        "llama-server not found in {}; install it with `brew install llama.cpp`, or set \
+         `llama_server` in [models] of config.toml to its absolute path",
+        LLAMA_SERVER_DIRS.join(" or ")
+    )]
+    NotFound,
+    #[error("the configured llama_server `{0}` is not an executable file")]
+    NotExecutable(PathBuf),
+    #[error("the configured llama_server `{0}` must be an absolute path")]
+    NotAbsolute(PathBuf),
+    #[error("could not start llama-server: {0}")]
     Spawn(std::io::Error),
     #[error("no free port on 127.0.0.1: {0}")]
     Port(std::io::Error),
@@ -40,9 +53,50 @@ pub enum ServerError {
     Http(String),
 }
 
+/// Where llama-server is looked for, in order (Homebrew on Apple Silicon,
+/// then on Intel or by hand). Never `PATH`.
+pub const LLAMA_SERVER_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+
+/// The llama-server to run: `explicit` (absolute, executable) if given, and
+/// then nothing else; otherwise the first executable `llama-server` in
+/// [`LLAMA_SERVER_DIRS`].
+pub fn find_llama_server(explicit: Option<&Path>) -> Result<PathBuf, ServerError> {
+    find_in(explicit, LLAMA_SERVER_DIRS, is_executable_file)
+}
+
+fn find_in(
+    explicit: Option<&Path>,
+    dirs: &[&str],
+    executable: impl Fn(&Path) -> bool,
+) -> Result<PathBuf, ServerError> {
+    if let Some(path) = explicit {
+        if !path.is_absolute() {
+            return Err(ServerError::NotAbsolute(path.to_owned()));
+        }
+        return if executable(path) {
+            Ok(path.to_owned())
+        } else {
+            Err(ServerError::NotExecutable(path.to_owned()))
+        };
+    }
+    dirs.iter()
+        .map(|dir| Path::new(dir).join("llama-server"))
+        .find(|path| executable(path))
+        .ok_or(ServerError::NotFound)
+}
+
+/// A regular file (after following links, as Homebrew's are) with an
+/// execute bit.
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
 /// What to run.
 #[derive(Debug, Clone)]
 pub struct ServerSpec {
+    /// The llama-server binary, from [`find_llama_server`].
+    pub program: PathBuf,
     /// Verified against `models.toml` by the caller.
     pub weights: PathBuf,
     pub mmproj: PathBuf,
@@ -83,7 +137,7 @@ impl ManagedServer {
     pub async fn start(spec: &ServerSpec) -> Result<Self, ServerError> {
         let key = random_key().map_err(ServerError::Key)?;
         let port = free_port().map_err(ServerError::Port)?;
-        let child = Command::new("llama-server")
+        let child = Command::new(&spec.program)
             .args(["--host", "127.0.0.1"])
             .args(["--port", &port.to_string()])
             .arg("-m")
@@ -241,6 +295,46 @@ fn random_key() -> std::io::Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn llama_server_is_found_only_by_absolute_path() {
+        let dirs = ["/opt/homebrew/bin", "/usr/local/bin"];
+        let only = |wanted: &'static str| move |p: &Path| p == Path::new(wanted);
+        assert_eq!(
+            super::find_in(None, &dirs, only("/usr/local/bin/llama-server")).unwrap(),
+            Path::new("/usr/local/bin/llama-server")
+        );
+        // Homebrew's comes first when both exist.
+        assert_eq!(
+            super::find_in(None, &dirs, |_| true).unwrap(),
+            Path::new("/opt/homebrew/bin/llama-server")
+        );
+        assert!(matches!(
+            super::find_in(None, &dirs, |_| false),
+            Err(super::ServerError::NotFound)
+        ));
+        // An explicit path is the only one tried, and must be absolute.
+        let mine = Path::new("/opt/llama.cpp/build/bin/llama-server");
+        assert_eq!(
+            super::find_in(
+                Some(mine),
+                &dirs,
+                only("/opt/llama.cpp/build/bin/llama-server")
+            )
+            .unwrap(),
+            mine
+        );
+        assert!(matches!(
+            super::find_in(Some(mine), &dirs, only("/opt/homebrew/bin/llama-server")),
+            Err(super::ServerError::NotExecutable(_))
+        ));
+        assert!(matches!(
+            super::find_in(Some(Path::new("bin/llama-server")), &dirs, |_| true),
+            Err(super::ServerError::NotAbsolute(_))
+        ));
+    }
+
     use super::*;
 
     #[test]

@@ -112,6 +112,7 @@ async fn start_managed(id: String, ctx: u32, args: Vec<String>) -> Result<Manage
                 .with_context(|| format!("{id} has no {kind:?} file"))
         };
         Ok(ServerSpec {
+            program: crate::config::Config::load()?.models.llama_server()?,
             weights: file(Kind::Weights)?,
             mmproj: file(Kind::Mmproj)?,
             alias: id.clone(),

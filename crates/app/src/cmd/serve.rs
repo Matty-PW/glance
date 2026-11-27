@@ -69,7 +69,9 @@ pub fn run(args: Args) -> Result<()> {
         model.id
     );
 
-    let error = Command::new("llama-server")
+    let program = crate::config::Config::load()?.models.llama_server()?;
+    eprintln!("running {}", program.display());
+    let error = Command::new(&program)
         .args(["--host", "127.0.0.1"])
         .args(["--port", &port.to_string()])
         .arg("-m")
@@ -82,5 +84,5 @@ pub fn run(args: Args) -> Result<()> {
         .args(["--offline", "--no-webui"])
         .args(&args.extra)
         .exec();
-    Err(error).context("could not start llama-server (brew install llama.cpp)")
+    Err(error).with_context(|| format!("could not start {}", program.display()))
 }
