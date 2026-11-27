@@ -314,6 +314,10 @@ pub struct TestHooks {
 pub struct AppSetup {
     models: Arc<dyn ModelsBackend>,
     stt: String,
+    /// FAST is an endpoint given on the command line: no FAST download.
+    fast_external: bool,
+    /// The pipeline could not start (shown instead of a test).
+    broken: Mutex<Option<String>>,
     state: Mutex<SetupState>,
     test: Mutex<TestResult>,
     hooks: OnceLock<TestHooks>,
@@ -330,10 +334,12 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl AppSetup {
-    pub fn new(models: Arc<dyn ModelsBackend>, stt: String) -> Arc<Self> {
+    pub fn new(models: Arc<dyn ModelsBackend>, stt: String, fast_external: bool) -> Arc<Self> {
         Arc::new(Self {
             models,
             stt,
+            fast_external,
+            broken: Mutex::new(None),
             state: Mutex::new(SetupState::load()),
             test: Mutex::new(TestResult::Idle),
             hooks: OnceLock::new(),
@@ -359,6 +365,11 @@ impl AppSetup {
 
     pub fn set_running(&self, fast: String, deep: Option<String>) {
         *lock(&self.running) = Some((fast, deep));
+    }
+
+    /// The pipeline failed to start: the test says so.
+    pub fn set_broken(&self, message: String) {
+        *lock(&self.broken) = Some(message);
     }
 
     pub fn set_test(&self, result: TestResult) {
@@ -445,6 +456,7 @@ impl AppSetup {
         };
         let ids: Vec<String> = configured_models(&config, &self.stt)
             .into_iter()
+            .filter(|(_, label)| !(self.fast_external && label == "FAST model"))
             .map(|(id, _)| id)
             .collect();
         models_present(&ids)
@@ -572,6 +584,13 @@ impl SetupBackend for AppSetup {
 
     fn start_test(&self) -> Result<(), String> {
         if self.test().is_running() {
+            return Ok(());
+        }
+        if let Some(broken) = lock(&self.broken).clone() {
+            self.set_test(TestResult::Failed {
+                stage: glance_orchestrator::setup::Stage::Model,
+                hint: format!("glance could not start: {broken}"),
+            });
             return Ok(());
         }
         let Some(hooks) = self.hooks.get() else {

@@ -18,6 +18,23 @@ struct Cli {
     command: Command,
 }
 
+/// The arguments, with `app` when there are none: Glance.app opened from
+/// Finder, or reopened by macOS after a permission change, gets no
+/// arguments (old systems add a `-psn_…` one, which is dropped).
+fn arguments() -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os()
+        .filter(|a| !a.to_string_lossy().starts_with("-psn_"))
+        .collect();
+    if args.len() <= 1 {
+        args.truncate(1);
+        if args.is_empty() {
+            args.push("glance".into());
+        }
+        args.push("app".into());
+    }
+    args
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// The menu-bar app: hold Ctrl+Opt+G, ask about the screen, hear the answer.
@@ -61,10 +78,14 @@ enum Command {
     },
     /// Draw glance's own windows (demo text) to PNGs for layout review.
     UiSnapshots(cmd::ui_snapshots::Args),
+    /// Internal: exit 0 if this process may record the screen, 1 if not
+    /// (setup asks a fresh process to see a grant that needs a restart).
+    #[command(hide = true)]
+    PermissionProbe,
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(arguments());
     let runtime = || {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -80,6 +101,7 @@ fn main() -> anyhow::Result<()> {
         Command::Say(args) => cmd::say::run(args),
         Command::Voices { action } => cmd::say::voices(action),
         Command::UiSnapshots(args) => cmd::ui_snapshots::run(args),
+        Command::PermissionProbe => std::process::exit(glance_macos::permission::probe_exit_code()),
         Command::Spike(args) => {
             // The spike speaks, and macOS delivers speech events on the main
             // thread's run loop. So the pipeline runs on the runtime's worker
