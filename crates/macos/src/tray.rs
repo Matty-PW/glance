@@ -23,6 +23,7 @@ const ID_MIC: &str = "permission-mic";
 const ID_NEW_SESSION: &str = "new-session";
 const ID_SETTINGS: &str = "settings";
 const ID_MODELS: &str = "models";
+const ID_SETUP: &str = "setup";
 const ID_QUIT: &str = "quit";
 
 /// A change to show. Built on any thread, applied on the main thread.
@@ -129,6 +130,12 @@ pub fn install(model_line: &str) {
         crate::shell::settings_backend().is_some(),
         None,
     );
+    let setup = MenuItem::with_id(
+        ID_SETUP,
+        "Set up glance…",
+        crate::shell::setup_backend().is_some(),
+        None,
+    );
     let menu = Menu::new();
     let built = menu.append_items(&[
         &status,
@@ -160,6 +167,7 @@ pub fn install(model_line: &str) {
         &screen,
         &mic,
         &PredefinedMenuItem::separator(),
+        &setup,
         &settings,
         &models,
         &quit,
@@ -315,6 +323,7 @@ fn on_menu(id: &str) {
         ID_MODELS => {
             DispatchQueue::main().exec_async(|| crate::settings::open_section(Some("Models")))
         }
+        ID_SETUP => crate::shell::open_setup(None),
         ID_QUIT => DispatchQueue::main().exec_async(crate::shell::quit),
         _ => {}
     }

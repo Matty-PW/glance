@@ -8,6 +8,7 @@
 //! - [`hotkeys`]: the chords as Carbon hotkeys (no Input Monitoring).
 //! - [`shell`]: the app (NSApplication run loop, menu-bar icon, overlay,
 //!   settings window), the orchestrator's `Shell`.
+//! - `setup`: the first-launch setup window (shown through [`shell`]).
 //! - [`glow`]: the screenshot indicator, a glow around the captured display.
 //! - [`theme`]: the accent colour and spacing, the only colour values here.
 //! - [`snapshot`]: `glance ui-snapshots`, glance's own windows drawn to PNGs.
@@ -27,6 +28,7 @@ mod overlay;
 pub mod permission;
 pub mod sample;
 mod settings;
+mod setup;
 pub mod shell;
 pub mod signing;
 pub mod snapshot;

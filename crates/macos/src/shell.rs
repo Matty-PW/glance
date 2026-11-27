@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use dispatch2::DispatchQueue;
 use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
+use glance_orchestrator::setup::{SetupBackend, Step};
 use glance_orchestrator::{HotkeyEvent, Outcome, ScreenshotUse, Shell, Shown, Update};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
@@ -40,6 +41,13 @@ pub struct Options {
     /// The microphone level (0.0 to about 1.0) for the overlay's Listening
     /// waveform. A single number, read only while listening.
     pub mic_level: Option<Box<dyn Fn() -> f32 + Send + Sync>>,
+    /// The setup window's backend (menu "Set up glance…", Settings, About).
+    pub setup: Option<Arc<dyn SetupBackend>>,
+    /// Open the setup window at launch, at this step.
+    pub setup_at: Option<Step>,
+    /// `--setup-demo`: the setup window's permission states are scripted
+    /// (nothing real is asked or read).
+    pub setup_demo: bool,
 }
 
 struct Actions {
@@ -50,6 +58,8 @@ struct Actions {
 static ACTIONS: OnceLock<Actions> = OnceLock::new();
 static SETTINGS: OnceLock<Arc<dyn SettingsBackend>> = OnceLock::new();
 static MODELS: OnceLock<Arc<dyn ModelsBackend>> = OnceLock::new();
+static SETUP: OnceLock<Arc<dyn SetupBackend>> = OnceLock::new();
+static SETUP_DEMO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 type LevelSource = Box<dyn Fn() -> f32 + Send + Sync>;
 static MIC_LEVEL: OnceLock<LevelSource> = OnceLock::new();
 
@@ -62,6 +72,22 @@ pub(crate) fn install_backends(settings: Arc<dyn SettingsBackend>, models: Arc<d
 /// The microphone level now (0 without a source).
 pub(crate) fn mic_level() -> f32 {
     MIC_LEVEL.get().map_or(0.0, |level| level())
+}
+
+/// `glance ui-snapshots`: use this setup backend, with scripted permissions.
+pub(crate) fn install_setup(setup: Arc<dyn SetupBackend>) {
+    let _ = SETUP.set(setup);
+    SETUP_DEMO.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The app's setup backend, if it gave one.
+pub(crate) fn setup_backend() -> Option<Arc<dyn SetupBackend>> {
+    SETUP.get().cloned()
+}
+
+/// Whether the setup window's permissions are scripted (`--setup-demo`).
+pub(crate) fn setup_demo() -> bool {
+    SETUP_DEMO.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The app's models backend, if it gave one.
@@ -157,6 +183,12 @@ pub fn run(
     if let Some(models) = options.models {
         let _ = MODELS.set(models);
     }
+    let with_setup = options.setup.is_some();
+    if let Some(setup) = options.setup {
+        let _ = SETUP.set(setup);
+    }
+    SETUP_DEMO.store(options.setup_demo, std::sync::atomic::Ordering::Relaxed);
+    let setup_at = options.setup_at;
 
     // Hotkeys first: if a chord cannot be registered, say which and do not
     // run the pipeline, so glance never sits there without a working chord.
@@ -170,6 +202,9 @@ pub fn run(
         tray::install(&model_line);
         if with_overlay {
             overlay::install();
+        }
+        if let Some(step) = setup_at {
+            crate::setup::open(Some(step));
         }
     });
 
@@ -194,9 +229,11 @@ pub fn run(
         }
     };
 
-    // Screen Recording: ask at launch rather than at the first question.
-    // macOS shows its prompt once; a grant needs a relaunch to take effect.
-    if !screen_recording_granted() {
+    // Screen Recording: without a setup window, ask at launch rather than
+    // at the first question (macOS shows its prompt once; a grant needs a
+    // relaunch). With one, its Permissions page asks, so the prompt never
+    // covers the Welcome page.
+    if !with_setup && !screen_recording_granted() {
         eprintln!("glance: Screen Recording is not granted; asking (relaunch after granting)");
         request_screen_recording();
     }
@@ -276,6 +313,12 @@ pub(crate) fn relaunch() {
 /// Show the settings window (tray menu, or `--open-settings`).
 pub fn open_settings() {
     dispatch2::DispatchQueue::main().exec_async(crate::settings::open);
+}
+
+/// Show the setup window: at `step`, or from the start ("Run setup
+/// again"). From any thread.
+pub fn open_setup(step: Option<Step>) {
+    DispatchQueue::main().exec_async(move || crate::setup::open(step));
 }
 
 /// Show the models window (tray menu, or `--open-models`).

@@ -381,6 +381,33 @@ impl Ui<'_> {
         b
     }
 
+    /// A radio button. Buttons wired to the same target are not grouped by
+    /// AppKit unless they share a superview, so callers set the states.
+    pub fn radio(&self, text: &str, id: isize) -> Retained<NSButton> {
+        // SAFETY: no target yet; `wire` sets it under its rules.
+        let b = unsafe {
+            NSButton::radioButtonWithTitle_target_action(
+                &NSString::from_str(text),
+                None,
+                None,
+                self.mtm,
+            )
+        };
+        self.wire(&b, id);
+        auto(&b);
+        b
+    }
+
+    /// A disclosure triangle (it shows no title: put a label beside it).
+    pub fn disclosure(&self, id: isize) -> Retained<NSButton> {
+        let b = self.button("", id, false);
+        b.setBezelStyle(objc2_app_kit::NSBezelStyle::Disclosure);
+        b.setButtonType(objc2_app_kit::NSButtonType::OnOff);
+        b.setImagePosition(objc2_app_kit::NSCellImagePosition::ImageLeading);
+        b.setState(NSControlStateValueOff);
+        b
+    }
+
     pub fn text_field(&self, placeholder: &str, id: isize, width: f64) -> Retained<NSTextField> {
         let f = NSTextField::textFieldWithString(&NSString::from_str(""), self.mtm);
         f.setPlaceholderString(Some(&NSString::from_str(placeholder)));

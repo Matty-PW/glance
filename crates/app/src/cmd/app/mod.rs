@@ -149,6 +149,9 @@ pub fn run(args: Args) -> Result<()> {
         overlay: config_file.overlay.enabled,
         settings: Some(settings::backend()),
         models: Some(models_backend),
+        setup: None,
+        setup_at: None,
+        setup_demo: false,
         mic_level: Some(Box::new(|| {
             if DEMO_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
                 demo_level()

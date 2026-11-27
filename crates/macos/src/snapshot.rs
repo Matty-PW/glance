@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use glance_orchestrator::settings::{ModelsBackend, SettingsBackend};
+use glance_orchestrator::setup::{Access, SetupBackend, Step};
 use glance_orchestrator::{Progress, ScreenshotUse, TurnState};
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -193,4 +194,64 @@ pub fn settings(
     }
     crate::settings::set_minimum_size(false);
     Ok(written)
+}
+
+/// One picture of the setup window: the backend is put into the scene
+/// called `name` first (demo data), the permission states are fixed.
+pub struct SetupScene {
+    pub name: &'static str,
+    pub step: Step,
+    pub screen: Access,
+    pub mic: Access,
+    pub signing: crate::signing::Signing,
+    /// Show Your Mac's "Advanced" part open.
+    pub advanced: bool,
+}
+
+/// Render each scene of the setup window in light and dark (and the
+/// smallest window in light) into `out`. Main thread.
+pub fn setup(
+    out: &Path,
+    backend: Arc<dyn SetupBackend>,
+    scenes: &[SetupScene],
+    prepare: &dyn Fn(&str),
+) -> Result<Vec<PathBuf>, String> {
+    let mtm = MainThreadMarker::new().ok_or("must run on the main thread")?;
+    let app = NSApplication::sharedApplication(mtm);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    crate::shell::install_setup(backend);
+    let mut written = Vec::new();
+    for (mode, dark, small) in [
+        ("light", false, false),
+        ("dark", true, false),
+        ("min-size", false, true),
+    ] {
+        for scene in scenes {
+            prepare(scene.name);
+            let perms = Box::new(crate::setup::perms::Demo::fixed(
+                scene.screen,
+                scene.mic,
+                scene.signing,
+            ));
+            let (_window, view) = crate::setup::stage(scene.step, dark, perms, scene.advanced)
+                .ok_or("no setup window")?;
+            crate::setup::set_minimum_size(small);
+            let path = out.join(format!("setup-{}-{mode}.png", scene.name));
+            save_view(&view, &path)?;
+            written.push(path);
+        }
+    }
+    crate::setup::set_minimum_size(false);
+    Ok(written)
+}
+
+/// The setup test's sample chart as `glance` renders it in memory, saved
+/// here only to review it.
+pub fn sample_chart(out: &Path) -> Result<PathBuf, String> {
+    let bytes = crate::sample::chart_png()?;
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    let path = out.join("setup-sample-chart.png");
+    std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
 }

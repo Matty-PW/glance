@@ -12,6 +12,7 @@ use super::{Reply, Section};
 const NOTICES: &str = include_str!("../../../../THIRD_PARTY.md");
 
 const SHOW_NOTICES: isize = 1;
+const RUN_SETUP: isize = 2;
 
 pub struct About {
     page: Page,
@@ -35,6 +36,13 @@ impl About {
                     Some("Local only: no telemetry, no update checks."),
                     false,
                     &version,
+                ),
+                ui::row(
+                    mtm,
+                    "Setup",
+                    Some("Permissions, models and a test question, step by step."),
+                    false,
+                    &ui.button("Run setup again", RUN_SETUP, false),
                 ),
                 ui::row(
                     mtm,
@@ -111,6 +119,9 @@ impl Section for About {
     fn on_change(&mut self, id: isize, _backend: &dyn SettingsBackend) -> Reply {
         if id == SHOW_NOTICES {
             self.notices.scrollRectToVisible(self.notices.bounds());
+        }
+        if id == RUN_SETUP {
+            crate::shell::open_setup(None);
         }
         Reply::Nothing
     }
