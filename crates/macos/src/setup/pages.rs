@@ -148,7 +148,13 @@ impl Caps {
             self.holder.removeArrangedSubview(&old);
             old.removeFromSuperview();
         }
-        self.holder.addArrangedSubview(&ui::keycaps(mtm, chord));
+        let caps = ui::keycaps(mtm, chord);
+        // As narrow as the keys, so the row puts them on the right.
+        caps.setHuggingPriority_forOrientation(
+            751.0,
+            objc2_app_kit::NSLayoutConstraintOrientation::Horizontal,
+        );
+        self.holder.addArrangedSubview(&caps);
     }
 }
 
@@ -556,15 +562,10 @@ impl PermissionsPage {
         commands.setSelectable(true);
         let signing_link = ui.button("Signing instructions", SIGNING_LINK, false);
         let before = page.stack.arrangedSubviews().count();
-        page.group(
-            mtm,
-            "This build",
-            &[
-                view_of(&*signing_text),
-                view_of(&*commands),
-                view_of(&*signing_link),
-            ],
-        );
+        // One row, so a hidden part leaves no separator behind.
+        let link_row = ui::stack(mtm, &[&signing_link], false, 0.0);
+        let block = ui::stack(mtm, &[&signing_text, &commands, &link_row], true, 10.0);
+        page.group(mtm, "This build", &[view_of(&*block)]);
         let signing_block = page.stack.arrangedSubviews().objectAtIndex(before);
         Self {
             page,
@@ -686,7 +687,9 @@ pub(crate) struct Download {
     refused: Option<DownloadIssue>,
 }
 
-fn bar(mtm: MainThreadMarker, width: f64, small: bool) -> Retained<NSProgressIndicator> {
+/// A determinate bar; `width` fixes its width (inside a group, leave it to
+/// the group's full-width rule, or the two fight and shrink the window).
+fn bar(mtm: MainThreadMarker, width: Option<f64>, small: bool) -> Retained<NSProgressIndicator> {
     let b = NSProgressIndicator::new(mtm);
     b.setStyle(NSProgressIndicatorStyle::Bar);
     b.setIndeterminate(false);
@@ -696,7 +699,9 @@ fn bar(mtm: MainThreadMarker, width: f64, small: bool) -> Retained<NSProgressInd
         b.setControlSize(NSControlSize::Small);
     }
     ui::auto(&b);
-    ui::activate(&[b.widthAnchor().constraintEqualToConstant(width)]);
+    if let Some(width) = width {
+        ui::activate(&[b.widthAnchor().constraintEqualToConstant(width)]);
+    }
     b
 }
 
@@ -713,14 +718,14 @@ fn grouped(files: &[FileProgress]) -> Vec<(String, String, u64, u64, FileState)>
                 row.3 += f.total;
                 row.4 = merge(row.4, f.state);
             } else {
-                let name = format!("{} ({} files)", f.model, count(&f.model));
+                let name = format!("{} files of {}", count(&f.model), f.model);
                 out.push((key, name, f.done, f.total, f.state));
             }
         } else {
             let file = f.path.rsplit('/').next().unwrap_or(&f.path);
             out.push((
                 format!("{}/{}", f.model, f.path),
-                format!("{file} ({})", f.model),
+                file.to_owned(),
                 f.done,
                 f.total,
                 f.state,
@@ -747,24 +752,21 @@ impl Download {
         let mtm = ui.mtm;
         let page = Page::new(mtm);
         let summary = body(mtm, "");
-        let overall = bar(mtm, TEXT, false);
+        let overall = bar(mtm, None, false);
         let overall_text = ui::secondary(mtm, "", TEXT);
         let primary = ui.button("Download", PRIMARY, true);
         let cancel = ui.button("Cancel", CANCEL, false);
         let buttons = ui::stack(mtm, &[&primary, &cancel], false, 8.0);
         let problem = Badge::new(mtm);
         let done = Badge::new(mtm);
+        // Hidden badges must not leave separator lines: one row holds them.
+        let status = ui::stack(mtm, &[&problem.view, &done.view, &buttons], true, 10.0);
+        let progress = ui::stack(mtm, &[&overall, &overall_text], true, 6.0);
+        ui::full_width(&overall, &progress, 0.0);
         page.group(
             mtm,
             "",
-            &[
-                view_of(&*summary),
-                view_of(&*overall),
-                view_of(&*overall_text),
-                view_of(&*problem.view),
-                view_of(&*done.view),
-                view_of(&*buttons),
-            ],
+            &[view_of(&*summary), view_of(&*progress), view_of(&*status)],
         );
         let list = ui::stack(mtm, &[], true, 8.0);
         page.group(mtm, "Files", &[view_of(&*list)]);
@@ -802,10 +804,13 @@ impl Download {
             self.rows.clear();
             for g in groups {
                 let name = ui::label(self.mtm, &g.1);
+                name.setToolTip(Some(&NSString::from_str(&g.0)));
                 let state = ui::label(self.mtm, "");
                 state.setFont(Some(&NSFont::systemFontOfSize(11.0)));
                 state.setTextColor(Some(&NSColor::secondaryLabelColor()));
-                let b = bar(self.mtm, 140.0, true);
+                state.setAlignment(objc2_app_kit::NSTextAlignment::Right);
+                ui::activate(&[state.widthAnchor().constraintEqualToConstant(64.0)]);
+                let b = bar(self.mtm, Some(140.0), true);
                 let right = ui::stack(self.mtm, &[&state, &b], false, 8.0);
                 let row = ui::row_with(self.mtm, &name, &right);
                 self.list.addArrangedSubview(&row);
@@ -843,10 +848,15 @@ impl StepPage for Download {
 
     fn fill(&mut self, snap: &SetupSnapshot, _env: &Env) {
         let chosen = snap.presets.iter().find(|p| p.id == snap.chosen);
+        let under_way = snap.download.as_ref().is_some_and(|d| {
+            !matches!(d.phase, DownloadPhase::Finished | DownloadPhase::Cancelled)
+        });
         if let Some(p) = chosen {
             set(
                 &self.summary,
-                &if p.missing_bytes == 0 {
+                &if under_way {
+                    format!("{}: {} from huggingface.co.", p.name, gb(p.total_bytes))
+                } else if p.missing_bytes == 0 {
                     format!(
                         "{}: {} in total, all on this Mac.",
                         p.name,
@@ -1272,8 +1282,8 @@ mod tests {
         }
         let rows = grouped(&files);
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].1, "w.gguf (fast)");
-        assert_eq!(rows[1].1, "voices (6 files)");
+        assert_eq!(rows[0].1, "w.gguf");
+        assert_eq!(rows[1].1, "6 files of voices");
         assert_eq!((rows[1].2, rows[1].3), (20, 60));
         assert_eq!(rows[1].4, FileState::Downloading);
     }

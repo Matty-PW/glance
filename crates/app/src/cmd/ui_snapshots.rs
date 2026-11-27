@@ -1,5 +1,5 @@
 //! `glance ui-snapshots`: glance's own windows drawn to PNGs (overlay states,
-//! the screenshot indicator's looks and settings pages, light and dark,
+//! the screenshot indicator's looks, settings and setup pages, light and dark,
 //! fixed demo text), to review layout.
 //! Development only. It never captures the screen.
 
@@ -30,10 +30,105 @@ pub fn run(args: Args) -> Result<()> {
         glance_macos::snapshot::settings(&args.out, Arc::new(DemoSettings), Arc::new(DemoModels))
             .map_err(anyhow::Error::msg)?,
     );
+    written.extend(setup(&args.out)?);
     for path in written {
         println!("{}", path.display());
     }
     Ok(())
+}
+
+/// Every setup page and its notable states, on the setup demo's data.
+fn setup(out: &std::path::Path) -> Result<Vec<PathBuf>> {
+    use glance_macos::signing::Signing;
+    use glance_macos::snapshot::SetupScene;
+    use glance_orchestrator::setup::{Access, Step};
+    let runtime = tokio::runtime::Builder::new_current_thread().build()?;
+    let demo = super::app::setup_demo::DemoSetup::new(runtime.handle().clone());
+    let scene = |name, step, screen, mic, signing, advanced| SetupScene {
+        name,
+        step,
+        screen,
+        mic,
+        signing,
+        advanced,
+    };
+    use Access::{Denied, Granted, NeedsRestart, NotAsked};
+    let ok = Signing::Stable;
+    let scenes = [
+        scene("welcome", Step::Welcome, NotAsked, NotAsked, ok, false),
+        scene("your-mac", Step::YourMac, NotAsked, NotAsked, ok, false),
+        scene(
+            "your-mac-advanced",
+            Step::YourMac,
+            NotAsked,
+            NotAsked,
+            ok,
+            true,
+        ),
+        scene("your-mac-8gb", Step::YourMac, NotAsked, NotAsked, ok, true),
+        scene(
+            "permissions",
+            Step::Permissions,
+            NotAsked,
+            NotAsked,
+            ok,
+            false,
+        ),
+        scene(
+            "permissions-denied-adhoc",
+            Step::Permissions,
+            Denied,
+            Denied,
+            Signing::AdHoc,
+            false,
+        ),
+        scene(
+            "permissions-restart",
+            Step::Permissions,
+            NeedsRestart,
+            Granted,
+            Signing::AdHoc,
+            false,
+        ),
+        scene(
+            "permissions-unbundled",
+            Step::Permissions,
+            Granted,
+            Granted,
+            Signing::NotBundled,
+            false,
+        ),
+        scene("download", Step::Download, Granted, Granted, ok, false),
+        scene(
+            "download-running",
+            Step::Download,
+            Granted,
+            Granted,
+            ok,
+            false,
+        ),
+        scene(
+            "download-failed",
+            Step::Download,
+            Granted,
+            Granted,
+            ok,
+            false,
+        ),
+        scene("download-done", Step::Download, Granted, Granted, ok, false),
+        scene("try-it", Step::TryIt, Granted, Granted, ok, false),
+        scene("try-it-listening", Step::TryIt, Granted, Granted, ok, false),
+        scene("try-it-works", Step::TryIt, Granted, Granted, ok, false),
+        scene("try-it-failed", Step::TryIt, Granted, Granted, ok, false),
+        scene("done", Step::Done, Granted, Granted, ok, false),
+        scene("all-set", Step::AllSet, Granted, Granted, ok, false),
+    ];
+    let backend = Arc::clone(&demo) as Arc<dyn glance_orchestrator::setup::SetupBackend>;
+    let mut written =
+        glance_macos::snapshot::setup(out, backend, &scenes, &|name| demo.set_scene(name))
+            .map_err(anyhow::Error::msg)?;
+    written.push(glance_macos::snapshot::sample_chart(out).map_err(anyhow::Error::msg)?);
+    Ok(written)
 }
 
 /// Demo settings with the longest names and labels glance can show, so the

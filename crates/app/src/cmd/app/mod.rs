@@ -9,6 +9,7 @@
 mod models;
 mod settings;
 pub mod setup;
+pub mod setup_demo;
 mod tiers;
 
 use std::sync::{Arc, OnceLock};
@@ -71,6 +72,12 @@ pub struct Args {
     /// "Set up glance…" in the menu-bar menu).
     #[arg(long)]
     open_setup: bool,
+    /// Walk through the setup window on made-up data (a fake download with
+    /// a failure, a restart-needed permission, a failing and a working
+    /// test). Touches no real permission, download, model or config; the
+    /// pipeline does not start.
+    #[arg(long)]
+    setup_demo: bool,
     #[command(flatten)]
     speech: SpeechArgs,
 }
@@ -176,7 +183,17 @@ pub fn run(args: Args) -> Result<()> {
         matches!(fast, Source::External { .. }),
     );
     let _ = SETUP.set(Arc::clone(&setup_backend));
-    let open_setup_at = setup_at(&args, &setup_backend);
+    let demo = args
+        .setup_demo
+        .then(|| setup_demo::DemoSetup::new(runtime.handle().clone()));
+    let open_setup_at = if demo.is_some() {
+        eprintln!(
+            "glance: setup demo: made-up data only; nothing real is asked, downloaded or saved"
+        );
+        Some(glance_orchestrator::setup::Step::Welcome)
+    } else {
+        setup_at(&args, &setup_backend)
+    };
     if let Some(step) = open_setup_at {
         eprintln!("glance: setup: opening at step={}", step.as_str());
     }
@@ -193,9 +210,12 @@ pub fn run(args: Args) -> Result<()> {
         overlay: config_file.overlay.enabled,
         settings: Some(settings::backend()),
         models: Some(models_backend),
-        setup: Some(Arc::clone(&setup_backend) as Arc<dyn glance_orchestrator::setup::SetupBackend>),
+        setup: Some(match &demo {
+            Some(demo) => Arc::clone(demo) as Arc<dyn glance_orchestrator::setup::SetupBackend>,
+            None => Arc::clone(&setup_backend) as Arc<dyn glance_orchestrator::setup::SetupBackend>,
+        }),
         setup_at: open_setup_at,
-        setup_demo: false,
+        setup_demo: demo.is_some(),
         mic_level: Some(Box::new(|| {
             if DEMO_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
                 demo_level()
@@ -218,6 +238,12 @@ pub fn run(args: Args) -> Result<()> {
                 handle.spawn(overlay_demo(Arc::clone(&shell)));
             }
             let _ = (fast, deep, models);
+            if let Some(demo) = &demo {
+                // The demo plays the overlay itself; no pipeline starts.
+                demo.attach(Arc::clone(&shell));
+                shell.status("Setup demo (no models are loaded)");
+                return;
+            }
             handle.spawn(start_when_ready(
                 args,
                 settings,
