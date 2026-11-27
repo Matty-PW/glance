@@ -1,6 +1,6 @@
 # glance — progress
 
-Snapshot as of 2026-11-25; the design is in `docs/DESIGN.md`. Numbers are from
+Snapshot as of 2026-11-27; the design is in `docs/DESIGN.md`. Numbers are from
 the Apple Silicon reference machine, with synthetic inputs unless noted.
 
 ## Milestone status
@@ -17,6 +17,56 @@ the Apple Silicon reference machine, with synthetic inputs unless noted.
 | M4: escalation, managed llama-server pair, DEEP bake-off | **Code done.** DEEP chosen (Qwen3.8-27B, pinned) and measured; FAST-only default, think harder on demand |
 | M5: overlay, settings, model management | **Code done.** Overlay, settings window, models page, personality, visual redesign, screenshot indicator; hands-on checks next |
 | Public release preparation | **Ready, not public.** Licence chosen, log gaps fixed; the rest is the maintainer's checklist (see below) |
+| First-launch setup window | **Code done** (2026-11-27); demo and snapshots reviewed; the clean-state run in the signed bundle is below |
+
+## First-launch setup (2026-11-27)
+
+Plan approved by the maintainer with three amendments (llama-server by
+fixed path only; the clean-state test moves models and state aside and
+restores them, deleting nothing; partials can never load and can be
+listed and cleared). Decisions: the test question uses the user's own
+voice; Basics is recommended on every tier, DEEP is an Advanced choice on
+48 GB+.
+
+Done:
+- Setup window (`crates/macos/src/setup/`): Welcome, Your Mac, Permissions,
+  Download models, Try it, Done, or a one-page "You're all set"; progress
+  dots with shape, not colour, carrying the meaning; Back / Next / Skip;
+  closable at any time, Cmd-Q quits. Opens at launch when setup was never
+  completed, a permission is missing or the configured models are not on
+  disk (`glance_orchestrator::setup::launch_decision`); again from the
+  menu ("Set up glance…") and Settings → About ("Run setup again").
+- Presets and recommendation (DESIGN §7.4), machine info from `sysctl` and
+  `df`, state in `Application Support/glance/state/setup.toml` (not
+  config.toml); config written only once the chosen models are on disk.
+- Downloads: Range resume, pause, queue, per-file progress, speed and time
+  left, partials kept on pause / failure / quit, cleared from Settings →
+  Models (DESIGN §8). Plain-word errors with stable codes.
+- Permissions: live states, the macOS prompts, a fresh-process probe for
+  "restart needed" and a restart that comes back to the page; ad-hoc and
+  unbundled builds explained (DESIGN §10).
+- `glance` with no arguments runs `app`; missing models no longer stop the
+  launch (the pipeline starts once they are there, from config as it is
+  then).
+- Test question: the built-in chart (drawn in memory) replaces the next
+  capture, the look chord is pressed for the user, the full pipeline runs
+  with the overlay, glow and voice; the result is "Works: first word in
+  N s" (the turn's ttfa) or the failed stage (capture, speech-to-text,
+  model, voice) with what to do. Logs carry stage codes and timings only.
+- llama-server is found only in `/opt/homebrew/bin` or `/usr/local/bin`,
+  or at `[models] llama_server` (absolute); never `PATH`.
+- `glance app --setup-demo` (scripted: a failing then resuming download, a
+  restart-needed permission, a failing then working test; touches
+  nothing real). `glance ui-snapshots` draws 18 setup scenes in light,
+  dark and at minimum size; reviewed, and four layout bugs fixed.
+- Tests: recommendation table (RAM × disk), flow and launch decision,
+  permission classification, stage per error, Range resume (append,
+  restart, oversized and tampered partials), partial listing and the load
+  gate, the state file, the queue's rate and time left. 257 tests in all.
+
+Not yet checked by hand: `--setup-demo` clicked through by the maintainer;
+Reduce Motion / Reduce Transparency (the window has no animation or blur);
+VoiceOver on the dots and badges.
 
 ## Public release preparation (2026-11-22)
 
@@ -553,6 +603,8 @@ glance tts-bench --out eval-local/kokoro-bench # Kokoro models vs system voice
 glance capture-check                         # live capture: sizes and timings only
 glance capture-check --indicator             # the glow is never in a capture (numbers only)
 glance app --overlay-demo                    # scripted turns + the indicator's looks
+glance app --setup-demo                      # the setup window on made-up data
+glance app --open-setup                      # the real setup window from Welcome
 export GLANCE_SIGN_IDENTITY=<SHA-1 from: security find-identity -v -p codesigning>
 cargo xtask bundle                           # signed target/bundle/Glance.app
 open -W --stderr "$(tty)" target/bundle/Glance.app --args app \
@@ -564,7 +616,7 @@ glance bench --endpoint ... --model ... --out eval-local/results/x.json
 # checks, before calling a milestone done
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked              # 221 tests
+cargo test --workspace --locked              # 257 tests
 cargo audit
 cargo deny check                             # passes; one ignore, one exception
 ```

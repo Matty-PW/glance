@@ -355,7 +355,9 @@ underneath `ort-sys`'s build script).
 
 A tier is `{endpoint, model name, image size, ctx, extra_body}`. Endpoint kinds:
 - `openai`: any OpenAI-compatible base URL (Ollama, LM Studio, user-configured).
-- `managed-llama-server`: glance spawns `llama-server` for a manifest model:
+- `managed-llama-server`: glance spawns `llama-server` (found only by absolute
+  path: `[models] llama_server`, else `/opt/homebrew/bin`, then
+  `/usr/local/bin`; never `PATH`, 2026-11-27) for a manifest model:
   `--host 127.0.0.1 --port <random> -m … --mmproj … --offline --no-webui
   --parallel 1 --ctx-size N`, with a random per-launch API key passed through the
   child's environment (`LLAMA_API_KEY`) and held in memory only. One process per
@@ -483,7 +485,7 @@ lists) after any custom text. It never mentions length. The layer and the
 length hint are pinned per turn at the chord press, so prefix reuse breaks
 at most once per change and server.
 
-### 7.4 Presets by RAM (design note, not built)
+### 7.4 Presets by RAM (built in the setup window, 2026-11-27)
 
 Decided 2026-11-18: the default is one small model, FAST only; DEEP is
 optional and loaded on demand. A preset would pick FAST, context, voice and
@@ -505,10 +507,23 @@ Kokoro fp32 1.74 GB; Qwen3-VL-4B at ctx 8192 5.3 GB; Qwen3-VL-8B at ctx 8192
 | 48 GB+ | 21.6 GB | Qwen3-VL-4B | 8192 | Kokoro fp32 | Qwen3.8-27B on demand, unloaded when idle | 7.0 GB idle, 26.4 GB with DEEP loaded (55% of 48 GB) |
 
 No 8 GB preset (maintainer, 2026-11-18): glance's measured minimum, 7.0 GB,
-does not fit beside macOS there. Open before presets are built: whether they
-are chosen automatically (`sysctl hw.memsize`) or offered as a first-run
-choice. This section is a design note; nothing reads presets yet. Config resolves as
-built-in defaults, then the preset, then the user's file (§7.1).
+does not fit beside macOS there.
+
+Built (2026-11-27) as a first-run choice in the setup window
+(`crates/app/src/cmd/app/setup.rs`), not an automatic overlay. The model
+list and tiers are unchanged. Presets: **Basics** (Qwen3-VL-4B), **Sharper
+reading** (8B, from 32 GB) and **Basics + think harder** (4B + Qwen3.8-27B
+on demand, from 48 GB); each includes Parakeet v3 and, with the Kokoro
+engine, Kokoro fp32 and its voices. Basics is recommended on every tier
+(maintainer, 2026-11-27: the fastest way to a first answer); the others
+are under "Advanced". Under 16 GB, or with RAM unreadable, only Basics is
+offered, with a clear warning. RAM comes from `hw.memsize`, in GiB as
+Apple counts them (16–31, 32–47, 48+). Only the 48 GB tier is measured;
+the page says "untested" on the others, and shows only the measured memory
+figures above. A preset fits when its missing bytes plus 2 GB are free.
+The choice is written to `[models] fast` / `deep` of config.toml (through
+`config_edit` and the strict parser) only once its models are on disk, so
+config never names a missing model.
 
 ## 8. Model manifest, download, verification
 
@@ -543,8 +558,8 @@ Rules enforced by the parser, each with a test:
   only).
 - Every file needs `size` and `sha256`; every model needs `license`.
 
-Download (only on an explicit `glance models pull <id>` or a settings button,
-never in the background):
+Download (only on an explicit `glance models pull <id>`, a settings button
+or the setup window's Download step, never in the background):
 1. HTTPS only, no cookies, no token, no proxy, generic `glance/<version>` user
    agent. Redirects are followed only to the exact allowlist: `huggingface.co`,
    `cdn-lfs.hf.co`, `cdn-lfs-us-1.hf.co`, `cdn-lfs-eu-1.hf.co`,
@@ -552,8 +567,15 @@ never in the background):
    `cas-server.xethub-eu.hf.co`, and HF's published `*.aws.cdn.hf.co` and
    `*.gcp.cdn.hf.co` names, listed one by one. The `amazonaws.com` hosts in HF's
    own list are deliberately left out.
-2. Stream into `models/.partial/`, hashing as bytes arrive; abort past `size`.
-   Resume with Range, re-hashing the partial first.
+2. Stream into `models/.partial/<sha256>.part`, hashing as bytes arrive;
+   abort past `size`. Resume with Range, re-hashing the partial first
+   (built 2026-11-27): a 206 that continues exactly where the partial
+   stops is appended, a 200 starts over, a 416 or an oversized partial is
+   dropped. Pause, a failure and quitting keep the partial; Cancel deletes
+   it; Settings → Models lists unfinished downloads (orphans included) and
+   can clear them. A partial can never be loaded: no manifest path or id
+   may start with `.`, `.part` is not an allowed extension, and the load
+   gate checks only the manifest's own paths.
 3. On completion check size, SHA-256, and format magic, then atomically rename into
    `models/<id>/`. A mismatch deletes the partial and is a hard error.
 4. Before use: small files are re-hashed on every load. Multi-GB files are
@@ -627,6 +649,19 @@ command line).
 
 The tray menu gets a "Permissions…" checklist showing each state with a deep link
 to the right System Settings pane.
+
+**Setup window (2026-11-27).** The Permissions step shows Screen Recording
+and Microphone with their state (refreshed every second), a reason, and one
+button: "Allow…" (the macOS prompt: `CGRequestScreenCaptureAccess`,
+`AVCaptureDevice requestAccessForMediaType:`), "Open System Settings", or
+"Restart glance". A Screen Recording grant made while glance runs is often
+visible only to a new process, so glance asks a child (`glance
+permission-probe`, which shares its identity for these checks): granted
+there but not here means "restart needed"; the restart comes back to this
+step. With a setup window, glance no longer asks for Screen Recording at
+launch. An ad-hoc build (from `codesign -dv`) or a binary outside the
+bundle gets a plain note. Input Monitoring and Accessibility are not
+needed and not asked for.
 
 ## 11. Security rules → mechanisms
 
@@ -763,6 +798,10 @@ end-to-end run is `glance spike` (see README).
   report. Escalation gate, managed servers and the orchestrator's escalation
   flow are built and tested; DEEP candidates are not yet downloaded.
 - **M5**: settings, overlay, Keychain, model manifest management.
+- **First-launch setup** (2026-11-27, code done): a setup window from the
+  first launch to a first answer with no config editing: Your Mac and a
+  preset (§7.4), permissions (§10), resumable pinned downloads (§8), a test
+  question on a built-in chart. Status in `docs/PROGRESS.md`.
 
 Each milestone ends with tests, `cargo audit`, `cargo deny check`, a commit (never
 a push), a summary under 10 lines, and a stop for the maintainer's go-ahead.

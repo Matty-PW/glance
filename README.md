@@ -36,9 +36,11 @@ small overlay.
 - Xcode Command Line Tools (full Xcode is not needed) and
   [rustup](https://rustup.rs); the Rust version is pinned in
   `rust-toolchain.toml`.
-- `llama-server` from llama.cpp: `brew install llama.cpp`.
-- Disk: about 4.5 GB for the default models; another 18 GB for the optional
-  *think harder* model.
+- `llama-server` from llama.cpp: `brew install llama.cpp`. glance looks for it
+  only in `/opt/homebrew/bin` and `/usr/local/bin` (never `PATH`), or at
+  `[models] llama_server` in the config file.
+- Disk: about 4.3 GB for the default models (setup keeps 2 GB free beyond
+  that); another 18.4 GB for the optional *think harder* model.
 
 **Memory.** Measured resident memory (glance with speech recognition and the
 voice, plus its model server):
@@ -49,46 +51,61 @@ voice, plus its model server):
 | Larger FAST | Qwen3-VL 8B | off | 9.8 GB |
 | With DEEP loaded | Qwen3-VL 4B | Qwen3.8 27B, on demand | 26.4 GB (7.0 GB while DEEP is unloaded) |
 
-Suggested by RAM (a design note: glance does not pick a preset for you yet,
-you choose models in Settings):
+What setup offers by RAM (it recommends Basics everywhere; the others are
+under "Advanced"):
 
-| RAM | Suggested setup |
+| RAM | Offered |
 |---|---|
-| 8 GB | Not supported: the default setup needs 7.0 GB beside macOS |
-| 16 GB | Default (4B). TODO: not yet tested on a 16 GB Mac |
-| 32 GB | Default, or the 8B FAST model. TODO: not yet tested on a 32 GB Mac |
-| 48 GB+ | Default plus DEEP on demand (measured on 48 GB) |
+| Under 16 GB | Not supported: only Basics, with a warning (glance needs about 7 GB beside macOS) |
+| 16 GB | Basics. Untested on a 16 GB Mac |
+| 32 GB | Basics, or Sharper reading (8B). Untested on a 32 GB Mac |
+| 48 GB+ | Basics, Sharper reading, or Basics + think harder (DEEP on demand). Measured on 48 GB |
 
 ## Quick start
 
-**1. Download the models** (each file is checked against its pinned SHA-256)
+**1. Build and open the app**
 
 ```sh
 git clone https://github.com/Matty-PW/glance && cd glance
-alias glance='cargo run --release -q -p glance --'
-
-glance models pull qwen3-vl-4b-instruct-q4km    # vision model, 3.3 GB
-glance models pull parakeet-tdt-0.6b-v3-int8    # speech recognition, 0.7 GB
-glance models pull kokoro-82m-v1.0-fp32         # voice, 0.3 GB
-glance models pull kokoro-82m-v1.0-voices-en    # 28 English voices
+brew install llama.cpp                          # provides llama-server
+cargo xtask bundle                              # → target/bundle/Glance.app
+open target/bundle/Glance.app
 ```
 
-**2. Build and sign the app**
+**2. Follow setup.** On first launch glance opens a setup window, one step
+at a time:
+- **Your Mac:** chip, memory and free disk, and a recommended setup (what it
+  includes, the download size and the memory it uses). Others are under
+  "Advanced".
+- **Permissions:** Screen Recording and Microphone, each with a button to
+  allow it or open the right System Settings pane. If macOS needs glance to
+  restart after Screen Recording, the page says so and restarts it.
+- **Download models:** about 4.3 GB for Basics, from Hugging Face only, each
+  file checked against its pinned SHA-256. You can pause, close the window,
+  or quit; it carries on where it stopped.
+- **Try it:** a test question on a built-in picture of a chart (not your
+  screen): you read a question aloud and hear the answer, with the time to
+  the first word, or which part failed and what to do.
+
+No config file editing is needed. Setup opens again later from the menu-bar
+menu ("Set up glance…") or Settings → About ("Run setup again").
+`glance app --setup-demo` walks through it on made-up data.
+
+### Keep permissions across rebuilds
+
+macOS ties permission grants to the app's signing identity. Without one,
+`cargo xtask bundle` signs ad hoc and macOS asks again after each build.
+With your own code-signing certificate, grants survive rebuilds:
 
 ```sh
 security find-identity -v -p codesigning        # pick a signing identity
 export GLANCE_SIGN_IDENTITY=<its SHA-1>
-cargo xtask bundle                              # → target/bundle/Glance.app
-open target/bundle/Glance.app --args app
+cargo xtask bundle
 ```
 
-A stable signing identity lets macOS keep your permission grants across
-rebuilds; without one, glance is signed ad hoc and macOS asks again after
-each build.
-
-**3. Allow access.** On first use macOS asks for **Screen Recording** and
-**Microphone**. The menu-bar menu shows anything still missing, with a link
-to System Settings.
+**3. From the command line** (optional): the same pinned downloads are
+`glance models pull <id>` (see `glance models list`), with
+`alias glance='cargo run --release -q -p glance --'`.
 
 **4. Ask.**
 
@@ -120,6 +137,7 @@ Personality, Think harder, Models, Hotkeys, Appearance, About), or edit
 | `models.response_length` | `medium` | `short`, `medium` or `long` |
 | `models.personality` | `neutral` | Also `friendly`, `direct`, `strict`, `pirate`, `caveman`, `shakespearean`, `custom` |
 | `models.auto_escalate` | `false` | Let FAST hand hard questions to DEEP by itself |
+| `models.llama_server` | none | Absolute path to `llama-server`; otherwise `/opt/homebrew/bin`, then `/usr/local/bin` |
 | `appearance.accent` | `glance` | Accent colour: glance's coral or the macOS accent (`system`) |
 | `appearance.screenshot_indicator` | `glow` | On a new screenshot: a short `glow` around the edge of the captured display, `subtle` (a thin line) or `off`. The overlay also says "New screenshot taken" or "Using screenshot from 12 s ago". Never in the image sent to the model |
 | `hotkeys.talk` / `look` / `think` | `Ctrl+Opt+G` / `Ctrl+Opt+Shift+G` / `Ctrl+Opt+T` | The three chords |
@@ -176,7 +194,7 @@ What glance does, and where the code enforces it:
 
 | When | What | Why |
 |---|---|---|
-| **Running glance** | **Model downloads from Hugging Face** (`huggingface.co`, redirects only to an exact list of Hugging Face CDN hosts, HTTPS only, each file checked against its pinned SHA-256) | Only when you download a model (`glance models pull` or Settings → Models) |
+| **Running glance** | **Model downloads from Hugging Face** (`huggingface.co`, redirects only to an exact list of Hugging Face CDN hosts, HTTPS only, each file checked against its pinned SHA-256) | Only when you download a model (setup, Settings → Models, or `glance models pull`) |
 | Running glance | `127.0.0.1` only | Talking to its own model servers |
 | Building glance | crates.io (Cargo), and ONNX Runtime from `cdn.pyke.io` (the `ort-sys` build script, checked against a SHA-256 in the crate) | Compiling only; nothing is downloaded at run time |
 
