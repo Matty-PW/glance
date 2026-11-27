@@ -68,7 +68,7 @@ M4 Pro, 48GB.
 - M3's code is done too (sessions: follow-ups, `look` vs `talk`, idle
   expiry, "New session"); it needs a spoken run through the app.
 - M4 is in progress: escalation and managed llama-servers are done; the DEEP
-  model is not chosen or downloaded yet (see `docs/PROGRESS.md`).
+  model is chosen and pinned (Qwen3.8-27B, see `docs/PROGRESS.md`).
 - TTS: Kokoro-82M fp32 is the default voice, the macOS system voice is a
   config option and the fallback (`config.toml` `[speech]`). The phonemizer is
   misaki-rs with espeak off; its data-provenance caveat is in `THIRD_PARTY.md`.
