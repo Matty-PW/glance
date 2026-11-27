@@ -27,6 +27,7 @@ pub mod personality;
 mod report;
 mod session;
 pub mod settings;
+pub mod setup;
 mod turn;
 mod workers;
 
