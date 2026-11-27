@@ -142,7 +142,7 @@ pub fn bundle(root: &Path) -> Result<(), String> {
         .args(["--display", "--requirements", "-"])
         .arg(&app))?;
     println!(
-        "\nlaunch:\n  open -W --stderr \"$(tty)\" {} --args app --endpoint http://127.0.0.1:<port>/v1 --model <model>",
+        "\nlaunch (setup opens on the first launch):\n  open {0}\nwith glance's log in this terminal:\n  open -W --stderr \"$(tty)\" {0}",
         app.display()
     );
     Ok(())

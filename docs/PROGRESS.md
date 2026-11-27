@@ -64,6 +64,35 @@ Done:
   restart, oversized and tampered partials), partial listing and the load
   gate, the state file, the queue's rate and time left. 257 tests in all.
 
+**Clean-state run in the signed bundle (2026-11-27, maintainer at the
+keyboard).** Commands, in order (the identity is the one listed by
+`security find-identity -v -p codesigning`):
+```sh
+kill -TERM <Glance pid> <its llama-server pid>      # the running glance
+GLANCE_SIGN_IDENTITY=<SHA-1> cargo xtask bundle     # stable identity
+tccutil reset ScreenCapture io.github.matty-pw.glance
+tccutil reset Microphone io.github.matty-pw.glance
+G="$HOME/Library/Application Support/glance"
+mv "$G/models" "$G/models.aside"                    # no state/ existed yet
+cp -p "$G/config.toml" "$G/config.toml.before-setup-test"
+open -W --stderr <log> target/bundle/Glance.app     # no arguments
+```
+Result: no-argument launch ran `app`; setup opened at Welcome while the
+pipeline waited for models; Your Mac chose Basics (the config's 8B + DEEP
+pair is not a preset); Screen Recording asked, allowed in System Settings,
+"Restart glance" came back to Permissions; Microphone allowed; Basics
+downloaded (4 models, 4.1 GiB, no partials left; `glance models verify`
+re-hashed every file ok); the test question worked; "Start using glance"
+completed setup. config.toml changed only `[models] fast` (to the 4B) and
+`deep` (removed), every other line kept; the state file held `completed =
+true`, `preset = "basics"`. The new instance ran
+`/opt/homebrew/bin/llama-server` by absolute path. Restored afterwards:
+models back from `models.aside`, config.toml copied back (identical), the
+run's files kept as `models.setup-test`, `state.setup-test` and
+`config.toml.before-setup-test` (nothing deleted). The second instance's
+log after the restart is not captured (`open -n` detaches it), so the
+test's ttfa was seen in the window only.
+
 Not yet checked by hand: `--setup-demo` clicked through by the maintainer;
 Reduce Motion / Reduce Transparency (the window has no animation or blur);
 VoiceOver on the dots and badges.
