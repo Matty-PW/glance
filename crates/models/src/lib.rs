@@ -8,6 +8,6 @@ pub mod download;
 pub mod manifest;
 pub mod store;
 
-pub use download::{DownloadError, Outcome, pull};
+pub use download::{DownloadError, Failure, Outcome, pull};
 pub use manifest::{Format, Kind, Manifest, ManifestError, Model, ModelFile, Role};
-pub use store::{ModelStore, VerifyError};
+pub use store::{ModelStore, Partial, VerifyError};

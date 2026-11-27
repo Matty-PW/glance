@@ -287,6 +287,15 @@ mod tests {
     }
 
     #[test]
+    fn no_model_id_can_be_the_partial_directory() {
+        let text = file("a.gguf", "weights", "gguf", 10).replace("id = \"m\"", "id = \".partial\"");
+        assert!(matches!(
+            Manifest::parse(&text),
+            Err(ManifestError::Model { .. })
+        ));
+    }
+
+    #[test]
     fn builtin_manifest_is_valid() {
         Manifest::builtin().expect("models.toml in the repo must always validate");
     }
@@ -359,6 +368,11 @@ mod tests {
             "a b.gguf",
             "a\\b.gguf",
             "dir/",
+            // Unfinished downloads can never be named as a model file.
+            ".partial/0123.part",
+            "a/.partial/b.gguf",
+            "a.gguf.part",
+            "a.part",
         ] {
             assert!(
                 Manifest::parse(&file(path, "weights", "gguf", 10)).is_err(),

@@ -35,6 +35,16 @@ pub enum VerifyError {
     NoHome,
 }
 
+/// One unfinished download in the partial directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partial {
+    /// File name inside the partial directory.
+    pub name: String,
+    pub bytes: u64,
+    /// The pinned hash it belongs to, if the name is `<sha256>.part`.
+    pub sha256: Option<String>,
+}
+
 /// Root directory holding one sub-directory per model id.
 #[derive(Debug, Clone)]
 pub struct ModelStore {
@@ -66,8 +76,16 @@ impl ModelStore {
         self.model_dir(model).join(&file.path)
     }
 
-    pub(crate) fn partial_dir(&self) -> PathBuf {
+    /// Unfinished downloads. No manifest path can point here (path parts
+    /// and model ids may not start with `.`), so nothing in it is ever
+    /// loaded.
+    pub fn partial_dir(&self) -> PathBuf {
         self.root.join(".partial")
+    }
+
+    /// Where an unfinished download of `file` is kept.
+    pub fn partial_path(&self, file: &ModelFile) -> PathBuf {
+        self.partial_dir().join(format!("{}.part", file.sha256))
     }
 
     /// Check one file against its pinned size, SHA-256 and format.
@@ -125,11 +143,59 @@ impl ModelStore {
     pub fn remove_partials(&self, model: &Model) -> u64 {
         let mut freed = 0;
         for file in &model.files {
-            let partial = self.partial_dir().join(format!("{}.part", file.sha256));
+            let partial = self.partial_path(file);
             if let Ok(meta) = std::fs::metadata(&partial)
                 && std::fs::remove_file(&partial).is_ok()
             {
                 freed += meta.len();
+            }
+        }
+        freed
+    }
+
+    /// Unfinished downloads: every `*.part` regular file directly inside
+    /// [`partial_dir`](Self::partial_dir), with its pinned SHA-256 (taken
+    /// from the name) when the name has that shape. Orphans (no pinned file
+    /// has that hash any more) are listed too.
+    pub fn partials(&self) -> Vec<Partial> {
+        let Ok(entries) = std::fs::read_dir(self.partial_dir()) else {
+            return Vec::new();
+        };
+        let mut list: Vec<Partial> = entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let meta = entry.metadata().ok()?;
+                let name = entry.file_name().into_string().ok()?;
+                let stem = name.strip_suffix(".part")?;
+                let sha256 = (stem.len() == 64
+                    && stem
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                .then(|| stem.to_owned());
+                // `metadata` on a DirEntry does not follow links.
+                meta.is_file().then_some(Partial {
+                    sha256,
+                    bytes: meta.len(),
+                    name,
+                })
+            })
+            .collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
+    }
+
+    /// Delete every unfinished download except those of the files whose
+    /// SHA-256 is in `keep` (a download that is running). Only `*.part`
+    /// regular files directly inside the partial directory are touched.
+    /// Returns the bytes freed.
+    pub fn clear_partials(&self, keep: &[&str]) -> u64 {
+        let mut freed = 0;
+        for partial in self.partials() {
+            if partial.sha256.as_deref().is_some_and(|s| keep.contains(&s)) {
+                continue;
+            }
+            if std::fs::remove_file(self.partial_dir().join(&partial.name)).is_ok() {
+                freed += partial.bytes;
             }
         }
         freed
@@ -333,5 +399,51 @@ mod tests {
         let m = manifest("a.onnx", "onnx", "weights", 3, ABC_SHA);
         write(&store, &m, b"ab");
         assert_eq!(store.files_present(m.model("m").unwrap()), 0);
+    }
+
+    #[test]
+    fn a_partial_is_never_a_model_file() {
+        // Even with exactly the pinned bytes, a partial does not satisfy the
+        // load gate: only the manifest's own path counts.
+        let store = temp_store("partial-gate");
+        let m = manifest("a.onnx", "onnx", "weights", 3, ABC_SHA);
+        let model = m.model("m").unwrap();
+        std::fs::create_dir_all(store.partial_dir()).unwrap();
+        std::fs::write(store.partial_path(&model.files[0]), b"abc").unwrap();
+        assert!(matches!(
+            store.verified_dir(model),
+            Err(VerifyError::Missing { .. })
+        ));
+        assert_eq!(store.files_present(model), 0);
+        std::fs::remove_dir_all(store.root()).unwrap();
+    }
+
+    #[test]
+    fn partials_are_listed_and_cleared_but_nothing_else() {
+        let store = temp_store("partials");
+        let dir = store.partial_dir();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let running = "b".repeat(64);
+        std::fs::write(dir.join(format!("{ABC_SHA}.part")), b"ab").unwrap();
+        std::fs::write(dir.join(format!("{running}.part")), b"abcd").unwrap();
+        std::fs::write(dir.join("odd-name.part"), b"x").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"mine").unwrap();
+        std::fs::write(dir.join("sub").join("deep.part"), b"x").unwrap();
+        let list = store.partials();
+        let names: Vec<&str> = list.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(list.len(), 3, "{names:?}");
+        assert_eq!(list.iter().map(|p| p.bytes).sum::<u64>(), 7);
+        assert!(list.iter().any(|p| p.sha256.as_deref() == Some(ABC_SHA)));
+        assert!(
+            list.iter()
+                .any(|p| p.name == "odd-name.part" && p.sha256.is_none())
+        );
+
+        assert_eq!(store.clear_partials(&[running.as_str()]), 3);
+        assert!(dir.join(format!("{running}.part")).exists());
+        assert!(dir.join("notes.txt").exists());
+        assert!(dir.join("sub").join("deep.part").exists());
+        assert_eq!(store.partials().len(), 1);
+        std::fs::remove_dir_all(store.root()).unwrap();
     }
 }
