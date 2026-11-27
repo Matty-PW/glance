@@ -8,6 +8,9 @@
 
 mod models;
 mod settings;
+// Wired into the launch path in the next commit.
+#[allow(dead_code)]
+pub mod setup;
 mod tiers;
 
 use std::sync::{Arc, OnceLock};

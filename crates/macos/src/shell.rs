@@ -233,6 +233,11 @@ pub(crate) fn quit() {
     }
 }
 
+/// Restart glance (setup, after a permission change), from any thread.
+pub fn restart() {
+    DispatchQueue::main().exec_async(relaunch);
+}
+
 /// "Apply and restart" (settings): start a fresh glance with the same
 /// arguments once this one has exited, so its hotkeys and model servers are
 /// free. Inside Glance.app that goes through `open -n`.

@@ -491,6 +491,9 @@ pub struct SetupSnapshot {
     /// glance must restart for the setup's choice to take effect (it was
     /// already running other models).
     pub needs_restart: bool,
+    /// glance has shown the Screen Recording prompt before (macOS shows it
+    /// once; after that only System Settings can change the answer).
+    pub screen_asked: bool,
 }
 
 /// Implemented by the app.
@@ -517,6 +520,8 @@ pub trait SetupBackend: Send + Sync {
     fn skip(&self) -> Skip;
     /// Restart glance and come back to `step`.
     fn restart(&self, step: Step);
+    /// The Screen Recording prompt was just shown.
+    fn note_screen_asked(&self);
 }
 
 #[cfg(test)]

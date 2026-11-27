@@ -650,32 +650,12 @@ fn parse_df(text: &str) -> Option<u64> {
 /// Settings counts), plus what this instance started with (still loaded
 /// until it restarts).
 pub fn in_use(stt: String, at_start: crate::config::Config) -> InUse {
-    let uses = |config: &crate::config::Config| {
-        let mut list = Vec::new();
-        let m = &config.models;
-        if m.fast_endpoint.is_none() {
-            list.push((m.fast.clone(), "FAST model".to_owned()));
-        }
-        if let (None, Some(deep)) = (&m.deep_endpoint, &m.deep) {
-            list.push((deep.clone(), "DEEP model".to_owned()));
-        }
-        if config.speech.engine == crate::config::Engine::Kokoro {
-            let name = config.speech.kokoro_model.as_str();
-            let id = super::super::KOKORO_MODELS
-                .iter()
-                .find(|(short, _)| *short == name)
-                .map_or(name, |(_, id)| id);
-            list.push((id.to_owned(), "voice".to_owned()));
-            list.push((super::super::KOKORO_VOICES.to_owned(), "voices".to_owned()));
-        }
-        list
-    };
-    let started = uses(&at_start);
+    let started = super::setup::configured_models(&at_start, &stt);
     Box::new(move || {
-        let mut list = vec![(stt.clone(), "speech recognition".to_owned())];
         let now = crate::config::Config::load()
-            .map(|c| uses(&c))
+            .map(|c| super::setup::configured_models(&c, &stt))
             .unwrap_or_default();
+        let mut list: Vec<(String, String)> = Vec::new();
         for entry in started.iter().chain(&now) {
             if !list.iter().any(|(id, _)| *id == entry.0) {
                 list.push(entry.clone());
